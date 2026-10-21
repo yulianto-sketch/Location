@@ -3,13 +3,16 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="Peta Turing Privat", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup Turing")
 
-# --- 1. DATABASE SQLITE ---
+# --- 1. TENTUKAN ZONA WAKTU WIB (UTC+7) ---
+WIB = timezone(timedelta(hours=7))
+
+# --- 2. DATABASE SQLITE ---
 def init_db():
     conn = sqlite3.connect('turing_lokasi.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -26,21 +29,22 @@ def init_db():
 
 conn = init_db()
 
-# --- 2. SESSION STATE ---
+# --- 3. SESSION STATE ---
 if "nama_saya" not in st.session_state:
     st.session_state.nama_saya = ""
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
 
-# --- 3. TANGKAP DATA GPS SILENT UPDATE DARI URL (BACKGROUND FETCH) ---
-# Mengambil data koordinat dari latar belakang secara ringan tanpa me-refresh halaman web
+# --- 4. TANGKAP DATA GPS SILENT UPDATE DARI URL (BACKGROUND FETCH) ---
 query_params = st.query_params
 if "lat" in query_params and "lon" in query_params and "user" in query_params:
     try:
         u_name = query_params["user"]
         u_lat = float(query_params["lat"])
         u_lon = float(query_params["lon"])
-        waktu_sekarang = datetime.now().strftime("%H:%M:%S")
+        
+        # Waktu lokal WIB
+        waktu_sekarang = datetime.now(WIB).strftime("%H:%M:%S")
         
         cursor = conn.cursor()
         cursor.execute('''
@@ -51,11 +55,19 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params:
     except ValueError:
         pass
 
-# --- SIDEBAR: KONTROL SESI & KELUAR SESI UNTUK SEMUA ---
+# --- 5. CEK APAKAH USER ADALAH ORANG PERTAMA YANG GABUNG ---
+df_check = pd.read_sql("SELECT nama FROM anggota ORDER BY ROWID ASC LIMIT 1", conn)
+is_first_member = False
+if not df_check.empty:
+    first_name = df_check.iloc[0]['nama']
+    if st.session_state.sedang_gabung and st.session_state.nama_saya == first_name:
+        is_first_member = True
+
+# --- SIDEBAR: KONTROL SESI & KELUAR SESI ---
 st.sidebar.header("⚙️ Sesi Turing")
 
 if not st.session_state.sedang_gabung:
-    # --- FORM LOGIN / GABUNG GRUP ---
+    # --- FORM LOGIN ---
     st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
     input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
@@ -63,49 +75,72 @@ if not st.session_state.sedang_gabung:
         if input_nama.strip() != "":
             st.session_state.nama_saya = input_nama.strip()
             st.session_state.sedang_gabung = True
+            
+            # Catat langsung ke DB saat pertama kali gabung dengan waktu WIB
+            waktu_sekarang = datetime.now(WIB).strftime("%H:%M:%S")
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR IGNORE INTO anggota (nama, lat, lon, waktu)
+                VALUES (?, ?, ?, ?)
+            ''', (st.session_state.nama_saya, -6.2088, 106.8456, waktu_sekarang))
+            conn.commit()
             st.rerun()
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
 else:
-    # --- MENU KETIKA SUDAH GABUNG (ADA TOMBOL KELUAR EKSKLUSIF) ---
+    # --- MENU KETIKA SUDAH GABUNG ---
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis setiap 1 menit secara hemat kuota).")
+    st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit, hemat kuota).")
     
     st.sidebar.markdown("---")
     
-    # TOMBOL KELUAR SESI
+    # TOMBOL KELUAR SESI UNTUK PRIBADI
     if st.sidebar.button("🚪 Keluar Sesi", type="secondary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
         conn.commit()
         
-        # Reset session
         st.session_state.sedang_gabung = False
         st.session_state.nama_saya = ""
         st.rerun()
 
+    # TOMBOL RESET KHUSUS ORANG PERTAMA YANG GABUNG
+    if is_first_member:
+        st.sidebar.markdown("---")
+        st.sidebar.warning("⭐ Anda adalah pembuat/peserta pertama sesi ini.")
+        if st.sidebar.button("🗑️ Reset Semua Anggota (Akhiri Sesi)", type="primary"):
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM anggota")
+            conn.commit()
+            
+            st.session_state.sedang_gabung = False
+            st.session_state.nama_saya = ""
+            st.success("Sesi di-reset untuk semua orang.")
+            st.rerun()
+
 st.sidebar.markdown("---")
 
-# --- 4. DAFTAR NAMA ANGGOTA AKTIF DI SIDEBAR ---
+# --- 6. DAFTAR NAMA ANGGOTA AKTIF DI SIDEBAR (FORMAT RAPI & WIB) ---
 st.sidebar.subheader("📋 Anggota Aktif di Grup")
 df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
 if not df_sidebar.empty:
     st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
     for idx, row in df_sidebar.iterrows():
         status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
-        st.sidebar.markdown(f"- 🏍️ **{row['nama']}**{status_kamu} <br><small style='color:gray;'>Update: {row['waktu']}</small>", unsafe_allow_html=True)
+        # Tampilan daftar nama dan waktu update WIB yang lebih rapi
+        st.sidebar.markdown(f"🏍️ **{row['nama']}**{status_kamu}<br><small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", unsafe_allow_html=True)
+        st.sidebar.markdown("---")
 else:
     st.sidebar.info("Belum ada anggota yang bergabung.")
 
-# --- 5. SKRIP JAVASCRIPT SILENT GPS BACKGROUND (1 MENIT SEKALI, SUPER RINGAN) ---
+# --- 7. SKRIP JAVASCRIPT SILENT GPS BACKGROUND (1 MENIT SEKALI) ---
 if st.session_state.sedang_gabung:
     current_user_name = st.session_state.nama_saya
     
-    # Skrip ini berjalan senyap di background browser tanpa memuat ulang halaman atau membuat peta berkedip
     html_silent_gps = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Background Tracker Aktif:</b> Mengirim update posisi setiap 1 menit secara senyap.
+        📡 <b>Background Tracker Aktif:</b> Mengirim update posisi WIB tiap 1 menit secara senyap.
     </div>
 
     <script>
@@ -118,7 +153,6 @@ if st.session_state.sedang_gabung:
                     const lat = position.coords.latitude;
                     const lon = position.coords.longitude;
                     
-                    // Kirim data secara senyap lewat manipulasi URL History tanpa merusak tampilan
                     const currentUrl = new URL(window.parent.location.href);
                     currentUrl.searchParams.set("user", userName);
                     currentUrl.searchParams.set("lat", lat);
@@ -133,16 +167,13 @@ if st.session_state.sedang_gabung:
         }}
     }}
 
-    // Eksekusi pertama kali, lalu ulangi otomatis setiap 60 detik (1 menit)
     sendSilentGPS();
     setInterval(sendSilentGPS, 60000);
     </script>
     """
     st.components.v1.html(html_silent_gps, height=50)
 
-st.markdown("---")
-
-# --- 6. TAMPILAN PETA BERSAMA (STABIL 1 LAYAR) ---
+# --- 8. TAMPILAN PETA BERSAMA (STABIL 1 LAYAR) ---
 col_tittle, col_btn = st.columns([3, 1])
 with col_tittle:
     st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
@@ -154,7 +185,6 @@ with col_btn:
 df_turing = pd.read_sql("SELECT * FROM anggota", conn)
 
 if not df_turing.empty:
-    # Hitung titik tengah peta
     center_lat = df_turing['lat'].mean()
     center_lon = df_turing['lon'].mean()
     
@@ -172,7 +202,7 @@ if not df_turing.empty:
         warna_marker = 'red' if is_me else 'blue'
         ikon_simbol = 'user' if is_me else 'motorcycle'
         
-        popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update: {row['waktu']}</small>"
+        popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small>"
         
         folium.Marker(
             [row['lat'], row['lon']], 
@@ -189,7 +219,6 @@ if not df_turing.empty:
             fill_opacity=0.15
         ).add_to(m)
 
-    # Render peta secara stabil
     st_folium(m, width=1100, height=520)
 
 else:
