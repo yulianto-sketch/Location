@@ -8,7 +8,7 @@ import requests
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="Peta Lokasi Privat", layout="wide")
-st.title("📍 Live Tracking Lokasi Grup & SPBU Radius 50km")
+st.title("📍 Live Tracking Lokasi Grup & SPBU Radius 30km")
 
 # --- 1. DATABASE SQLITE & MIGRASI SKEMA OTOMATIS ---
 def init_db():
@@ -43,23 +43,24 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --- FUNGSI AMBIL SEMUA SPBU REAL-TIME VIA OVERPASS API (OPENSTREETMAP) ---
-@st.cache_data(ttl=300) # Cache selama 5 menit agar cepat & tidak over-fetch
-def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
+# --- FUNGSI AMBIL SEMUA SPBU REAL-TIME (RADIUS 30KM) ---
+@st.cache_data(ttl=300) # Cache 5 menit agar cepat & tidak membebani koneksi
+def fetch_nearby_spbu(center_lat, center_lon, radius_km=30):
     radius_meters = int(radius_km * 1000)
     overpass_url = "https://overpass-api.de/api/interpreter"
     
+    # Query lengkap untuk mengambil hingga 300 SPBU dalam radius 30 km
     query = f"""
-    [out:json][timeout:15];
+    [out:json][timeout:20];
     (
       node["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
       way["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
       relation["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
     );
-    out center 150;
+    out center 300;
     """
     try:
-        resp = requests.post(overpass_url, data={'data': query}, timeout=12)
+        resp = requests.post(overpass_url, data={'data': query}, timeout=15)
         data = resp.json()
         spbu_list = []
         for element in data.get('elements', []):
@@ -67,8 +68,9 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
             lon = element.get('lon') or element.get('center', {}).get('lon')
             tags = element.get('tags', {})
             
+            # Deteksi nama SPBU / Brand
             brand = tags.get('brand', tags.get('operator', tags.get('name', 'SPBU / Pom Bensin')))
-            if brand == 'SPBU / Pom Bensin' and tags.get('name'):
+            if brand in ['SPBU / Pom Bensin', 'fuel'] and tags.get('name'):
                 brand = tags.get('name')
                 
             if lat and lon:
@@ -79,15 +81,13 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
                 })
         return spbu_list
     except Exception:
-        # Fallback daftar SPBU utama jika koneksi API sedang sibuk
+        # Fallback daftar SPBU utama jika koneksi server API sibuk
         return [
             {"nama": "SPBU Pertamina Rajeg", "lat": -6.1558, "lon": 106.5083},
             {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
             {"nama": "SPBU Rest Area KM 13.5 Tangerang", "lat": -6.2162, "lon": 106.6912},
-            {"nama": "SPBU Rest Area KM 43 Banten", "lat": -6.2575, "lon": 106.3980},
-            {"nama": "SPBU Rest Area KM 68 Serang", "lat": -6.1384, "lon": 106.1925},
-            {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
             {"nama": "SPBU Pertamina Pasar Kemis", "lat": -6.1732, "lon": 106.5412},
+            {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
             {"nama": "SPBU Pertamina Balaraja", "lat": -6.1912, "lon": 106.4521},
         ]
 
@@ -194,7 +194,7 @@ else:
     member_list = df_members['nama'].tolist() if not df_members.empty else []
     
     # 1. KICK ANGGOTA MANUAL
-    st.sidebar.write("BOOT **Kick Anggota**")
+    st.sidebar.write("👢 **Kick Anggota**")
     selected_member = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + member_list)
     kick_pin = st.sidebar.text_input("Password Kick:", type="password", key="kick_pin_input")
     
@@ -308,7 +308,7 @@ else:
     st.components.v1.html(html_synchronized_gps, height=50)
 
     # --- TAMPILAN PETA BERSAMA ---
-    st.subheader("🗺️ Peta Pantauan Anggota & SPBU Besar (Radius Max 50 KM)")
+    st.subheader("🗺️ Peta Pantauan Anggota & SPBU Radius Max 30 KM")
 
     df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
@@ -323,7 +323,7 @@ else:
             center_lat = df_valid['lat'].mean()
             center_lon = df_valid['lon'].mean()
         
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
         
         # 1. MARKER SELURUH ANGGOTA
         for idx, row in df_valid.iterrows():
@@ -349,19 +349,20 @@ else:
                 fill_opacity=0.2
             ).add_to(m)
 
-        # 2. MARKER SPBU BESAR LENGKAP DI RADIUS MAX 50 KM
-        spbu_data = fetch_nearby_spbu(center_lat, center_lon, radius_km=50)
+        # 2. MARKER SPBU LENGKAP DI RADIUS MAX 30 KM
+        spbu_data = fetch_nearby_spbu(center_lat, center_lon, radius_km=30)
         spbu_added = set()
         
         for spbu in spbu_data:
             dist = calculate_distance(center_lat, center_lon, spbu['lat'], spbu['lon'])
             
-            if dist <= 50.0:
+            # Filter ketat maksimal 30 KM dari titik user login
+            if dist <= 30.0:
                 spbu_key = (round(spbu['lat'], 4), round(spbu['lon'], 4))
                 if spbu_key not in spbu_added:
                     spbu_added.add(spbu_key)
                     
-                    # Pembedaan Warna Ikon: Kuning untuk Pertamina, Oranye untuk SPBU Lain
+                    # Warna Kuning untuk Pertamina, Warna Oranye untuk Merek Lain
                     nama_spbu_lower = spbu['nama'].lower()
                     if 'pertamina' in nama_spbu_lower:
                         warna_spbu = 'yellow'
