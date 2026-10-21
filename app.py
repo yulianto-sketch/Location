@@ -10,24 +10,13 @@ import requests
 st.set_page_config(page_title="Peta Lokasi Grup & SPBU", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup (Google/Email Login)")
 
-# --- 1. DATABASE SQLITE & OTOMATIS RESET TABEL LAMA ---
+# --- 1. DATABASE SQLITE MENGGUNAKAN TABEL VERSI BARU ---
 def init_db():
     conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
     cursor = conn.cursor()
-    
-    # Cek apakah tabel anggota sudah ada tapi belum punya PRIMARY KEY email
-    cursor.execute("PRAGMA table_info(anggota);")
-    columns = cursor.fetchall()
-    has_pk = any(col[5] == 1 for col in columns) # col[5] adalah penanda primary key di sqlite
-    
-    # Jika tabel sudah ada tapi email belum jadi primary key, drop tabel lama agar tidak error
-    if columns and not has_pk:
-        cursor.execute("DROP TABLE anggota;")
-        conn.commit()
-
-    # Buat ulang tabel dengan struktur bersih & email sebagai PRIMARY KEY
+    # Menggunakan nama tabel 'anggota_v2' untuk memastikan struktur PRIMARY KEY bersih dari konflik lama
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS anggota (
+        CREATE TABLE IF NOT EXISTS anggota_v2 (
             email TEXT PRIMARY KEY,
             nama TEXT,
             lat REAL,
@@ -106,7 +95,7 @@ if "user_name" not in st.session_state:
 if st.session_state.user_email == "" and "email" in query_params:
     email_url = query_params["email"]
     cursor = conn.cursor()
-    cursor.execute("SELECT email, nama FROM anggota WHERE email = ? AND status_aktif = 1", (email_url,))
+    cursor.execute("SELECT email, nama FROM anggota_v2 WHERE email = ? AND status_aktif = 1", (email_url,))
     user_data = cursor.fetchone()
     if user_data:
         st.session_state.user_email = user_data[0]
@@ -115,7 +104,7 @@ if st.session_state.user_email == "" and "email" in query_params:
 # Cek integritas sesi (apabila user dikeluarkan oleh admin)
 if st.session_state.user_email != "":
     cursor = conn.cursor()
-    cursor.execute("SELECT email FROM anggota WHERE email = ? AND status_aktif = 1", (st.session_state.user_email,))
+    cursor.execute("SELECT email FROM anggota_v2 WHERE email = ? AND status_aktif = 1", (st.session_state.user_email,))
     active_check = cursor.fetchone()
     if not active_check:
         st.session_state.user_email = ""
@@ -132,12 +121,12 @@ if "lat" in query_params and "lon" in query_params and "email" in query_params a
         
         if u_lat != 0.0 and u_lon != 0.0:
             cursor = conn.cursor()
-            cursor.execute("SELECT status_aktif FROM anggota WHERE email = ?", (u_email,))
+            cursor.execute("SELECT status_aktif FROM anggota_v2 WHERE email = ?", (u_email,))
             res = cursor.fetchone()
             
             if res and res[0] == 1:
                 cursor.execute('''
-                    UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE email = ?
+                    UPDATE anggota_v2 SET lat = ?, lon = ?, waktu = ? WHERE email = ?
                 ''', (u_lat, u_lon, waktu_sekarang, u_email))
                 conn.commit()
     except ValueError:
@@ -159,10 +148,9 @@ if st.session_state.user_email == "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            # Perintah INSERT OR REPLACE standar dengan Primary Key email yang valid
             cursor.execute('''
-                INSERT OR REPLACE INTO anggota (email, nama, lat, lon, waktu, status_aktif)
-                VALUES (?, ?, COALESCE((SELECT lat FROM anggota WHERE email = ?), 0.0), COALESCE((SELECT lon FROM anggota WHERE email = ?), 0.0), COALESCE((SELECT waktu FROM anggota WHERE email = ?), 'Mencari Sinyal GPS...'), 1)
+                INSERT OR REPLACE INTO anggota_v2 (email, nama, lat, lon, waktu, status_aktif)
+                VALUES (?, ?, COALESCE((SELECT lat FROM anggota_v2 WHERE email = ?), 0.0), COALESCE((SELECT lon FROM anggota_v2 WHERE email = ?), 0.0), COALESCE((SELECT waktu FROM anggota_v2 WHERE email = ?), 'Mencari Sinyal GPS...'), 1)
             ''', (clean_email, clean_name, clean_email, clean_email, clean_email))
             conn.commit()
             
@@ -184,7 +172,7 @@ else:
     # LOGOUT
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM anggota WHERE email = ?", (st.session_state.user_email,))
+        cursor.execute("DELETE FROM anggota_v2 WHERE email = ?", (st.session_state.user_email,))
         conn.commit()
         
         st.session_state.user_email = ""
@@ -198,7 +186,7 @@ else:
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛠️ Panel Admin (PIN: 123)")
     
-    df_members = pd.read_sql("SELECT email, nama FROM anggota WHERE status_aktif = 1", conn)
+    df_members = pd.read_sql("SELECT email, nama FROM anggota_v2 WHERE status_aktif = 1", conn)
     member_dict = dict(zip(df_members['nama'], df_members['email'])) if not df_members.empty else {}
     
     st.sidebar.write("👢 **Kick Anggota**")
@@ -210,7 +198,7 @@ else:
             if selected_name != "-- Pilih --":
                 target_email = member_dict[selected_name]
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM anggota WHERE email = ?", (target_email,))
+                cursor.execute("DELETE FROM anggota_v2 WHERE email = ?", (target_email,))
                 conn.commit()
                 st.sidebar.success(f"Anggota '{selected_name}' berhasil dikeluarkan!")
                 st.rerun()
@@ -226,7 +214,7 @@ else:
     if st.sidebar.button("🔥 Reset Semua", type="secondary"):
         if pin_input == "123":
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM anggota")
+            cursor.execute("DELETE FROM anggota_v2")
             conn.commit()
             
             st.session_state.user_email = ""
@@ -243,7 +231,7 @@ else:
 
     # --- DAFTAR ANGGOTA AKTIF ---
     st.sidebar.subheader("📋 Anggota Aktif di Grup")
-    df_sidebar = pd.read_sql("SELECT nama, email, lat, lon, waktu FROM anggota WHERE status_aktif = 1", conn)
+    df_sidebar = pd.read_sql("SELECT nama, email, lat, lon, waktu FROM anggota_v2 WHERE status_aktif = 1", conn)
     if not df_sidebar.empty:
         st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
         for idx, row in df_sidebar.iterrows():
@@ -335,7 +323,7 @@ else:
     # --- TAMPILAN PETA BERSAMA ---
     st.subheader("🗺️ Peta Pantauan Anggota & SPBU Radius Max 30 KM")
 
-    df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
+    df_lokasi = pd.read_sql("SELECT * FROM anggota_v2 WHERE status_aktif = 1", conn)
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
