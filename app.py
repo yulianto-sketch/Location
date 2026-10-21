@@ -110,7 +110,7 @@ if "lat" in query_params and "lon" in query_params and "nama" in query_params an
 st.sidebar.header("⚙️ Konfigurasi Touring")
 
 if st.session_state.user_name == "":
-    st.sidebar.info("👋 Masukkan nama panggilan unik untuk mulai membagikan lokasi.");
+    st.sidebar.info("👋 Masukkan nama panggilan unik untuk mulai membagikan lokasi.")
     
     input_nama = st.sidebar.text_input("Nama Panggilan:", placeholder="Contoh: Mas Lian")
     
@@ -119,7 +119,6 @@ if st.session_state.user_name == "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            # Cek apakah nama sudah dipakai orang lain
             cursor.execute("SELECT nama FROM peserta WHERE nama = ?", (clean_name,))
             existing = cursor.fetchone()
             
@@ -189,9 +188,9 @@ else:
     df_sidebar = pd.read_sql("SELECT nama, lat, waktu FROM peserta", conn)
     if not df_sidebar.empty:
         for idx, row in df_sidebar.iterrows():
-            status_ T = "🟢 Terhubung" if row['lat'] != 0.0 else "🟡 Menunggu GPS..."
+            status_t = "🟢 Terhubung" if row['lat'] != 0.0 else "🟡 Menunggu GPS..."
             is_me = " (Kamu)" if row['nama'] == st.session_state.user_name else ""
-            st.sidebar.markdown(f"**{row['nama']}**{is_me}<br><small>{status_T} | {row['waktu']}</small>", unsafe_allow_html=True)
+            st.sidebar.markdown(f"**{row['nama']}**{is_me}<br><small>{status_t} | {row['waktu']}</small>", unsafe_allow_html=True)
 
     # --- SKRIP JAVASCRIPT: AUTO SYNC GPS (SETIAP 30 DETIK) ---
     current_user = st.session_state.user_name
