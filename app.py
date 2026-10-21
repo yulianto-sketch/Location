@@ -65,15 +65,13 @@ if not st.session_state.sedang_gabung:
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
-# JIKA SUDAH GABUNG: Tombol gabung hilang, tampilkan tombol Keluar & Panel Reset
+# JIKA SUDAH GABUNG: Tombol gabung hilang, tampilkan Status, Tombol Logout, & Panel Reset
 else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
     st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit).")
     
-    st.sidebar.markdown("---")
-    
-    # TOMBOL KELUAR SESI
-    if st.sidebar.button("🚪 Keluar Sesi", type="secondary"):
+    # TOMBOL LOGOUT UTAMA
+    if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
         conn.commit()
@@ -87,7 +85,7 @@ else:
     st.sidebar.write("🛠️ **Panel Reset Grup (Butuh Kode)**")
     pin_input = st.sidebar.text_input("Masukkan Kode Reset:", type="password", key="pin_reset_input")
     
-    if st.sidebar.button("🗑️ Reset Semua Anggota", type="primary"):
+    if st.sidebar.button("🗑️ Reset Semua Anggota", type="secondary"):
         if pin_input == "123":
             cursor = conn.cursor()
             cursor.execute("DELETE FROM anggota")
