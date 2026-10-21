@@ -8,7 +8,7 @@ import sqlite3
 st.set_page_config(page_title="Peta Turing Privat", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup Turing")
 
-# --- 1. DATABASE SQLITE (Diperluas dengan kolom status login) ---
+# --- 1. DATABASE SQLITE & INISIALISASI TABEL (HARUS PALING ATAS) ---
 def init_db():
     conn = sqlite3.connect('turing_lokasi.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -26,11 +26,11 @@ def init_db():
 
 conn = init_db()
 
-# --- 2. COOKIE / SESSION STATE BERBASIS DATABASE ---
+# --- 2. SESSION STATE ---
 if "nama_saya" not in st.session_state:
     st.session_state.nama_saya = ""
 
-# Cek apakah nama yang tersimpan di memori lokal saat ini benar-benar terdaftar di database
+# --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-RESET ADMIN) ---
 if st.session_state.nama_saya != "":
     cursor = conn.cursor()
     cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (st.session_state.nama_saya,))
@@ -39,7 +39,7 @@ if st.session_state.nama_saya != "":
         # Jika sudah di-reset admin atau dihapus, bersihkan session lokal
         st.session_state.nama_saya = ""
 
-# --- 3. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
+# --- 4. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
 query_params = st.query_params
 if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
     try:
@@ -49,7 +49,6 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
         waktu_sekarang = query_params["time"]
         
         cursor = conn.cursor()
-        # Cek apakah user ini masih diizinkan aktif di database
         cursor.execute("SELECT status_aktif FROM anggota WHERE nama = ?", (u_name,))
         res = cursor.fetchone()
         
@@ -74,7 +73,6 @@ if st.session_state.nama_saya == "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            # Cek apakah nama sudah dipakai orang lain
             cursor.execute("SELECT nama FROM anggota WHERE nama = ?", (clean_name,))
             existing = cursor.fetchone()
             
@@ -82,11 +80,10 @@ if st.session_state.nama_saya == "":
                 st.sidebar.error("❌ Nama tersebut sudah digunakan oleh peserta lain. Gunakan nama panggilan lain.")
             else:
                 st.session_state.nama_saya = clean_name
-                # Masukkan ke database sebagai aktif
                 cursor.execute('''
                     INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu, status_aktif)
                     VALUES (?, ?, ?, ?, 1)
-                للم''', (clean_name, -6.2088, 106.8456, "Baru Bergabung"))
+                ''', (clean_name, -6.2088, 106.8456, "Baru Bergabung"))
                 conn.commit()
                 st.rerun()
         else:
