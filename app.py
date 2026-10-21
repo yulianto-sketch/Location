@@ -1,4 +1,4 @@
-import streamlit as str
+import streamlit as st  # <-- Sudah diperbaiki di sini (menggunakan st)
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
@@ -9,10 +9,6 @@ st.title("📍 Pelacak Lokasi Grup Turing")
 
 # 1. Input Nama User
 nama_user = st.text_input("Masukkan Nama Kamu untuk Gabung:", key="username")
-
-# Catatan: Untuk menyimpan koordinat secara real-time antar pengguna yang berbeda, 
-# idealnya kamu menyambungkan kode ini ke database gratis seperti Supabase, Firebase, atau Google Sheets.
-# Di bawah ini adalah simulasi pembacaan GPS via Browser:
 
 html_gps = """
 <script>
@@ -32,15 +28,12 @@ function error() {
 if nama_user:
     st.components.v1.html(html_gps, height=0)
     
-    # Menangkap data lokasi dari browser (jika komponen JavaScript mendeteksi koordinat)
-    # Di sini kamu bisa menulis fungsi untuk menyimpan 'nama_user', 'lat', 'lng' ke database eksternal.
-    
     st.success(f"Halo {nama_user}, lokasimu sedang diperbarui otomatis...")
     
     # 2. Menampilkan Peta Bersama
     st.subheader("Peta Posisi Anggota")
     
-    # Contoh titik koordinat default (Jakarta) atau diambil dari database koordinat grup turingmu
+    # Contoh titik koordinat default (Jakarta)
     data_turing = pd.DataFrame({
         'Nama': ['Kamu', 'Teman 1'],
         'lat': [-6.2088, -6.2100],
