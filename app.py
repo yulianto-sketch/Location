@@ -32,8 +32,11 @@ if "nama_saya" not in st.session_state:
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
 
-# --- SIDEBAR: KONTROL SESI ---
+# --- SIDEBAR: KONTROL SESI & DAFTAR ANGGOTA ---
 st.sidebar.header("⚙️ Sesi Turing")
+
+if not st.sidebar.get_option if hasattr(st.sidebar, 'get_option') else True:
+    pass
 
 if not st.session_state.sedang_gabung:
     st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
@@ -60,7 +63,20 @@ else:
         st.session_state.nama_saya = ""
         st.rerun()
 
-# --- 3. PROSES LOKASI GPS (BACKGROUND SILENT UPDATE) ---
+st.sidebar.markdown("---")
+
+# --- 3. DAFTAR NAMA ANGGOTA YANG GABUNG DI SIDEBAR ---
+st.sidebar.subheader("📋 Anggota Aktif di Grup")
+df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
+if not df_sidebar.empty:
+    st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
+    for idx, row in df_sidebar.iterrows():
+        status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
+        st.sidebar.markdown(f"- 🏍️ **{row['nama']}**{status_kamu} <br><small style='color:gray;'>Update: {row['waktu']}</small>", unsafe_allow_html=True)
+else:
+    st.sidebar.info("Belum ada anggota yang bergabung.")
+
+# --- 4. PROSES LOKASI GPS (BACKGROUND SILENT UPDATE) ---
 if st.session_state.sedang_gabung:
     # Tangkap parameter latitude & longitude dari URL Query
     query_params = st.query_params
@@ -82,8 +98,8 @@ if st.session_state.sedang_gabung:
 
     # Script JS untuk deteksi GPS tanpa mengganggu tampilan utama
     html_gps_script = """
-    <div id="status_gps" style="padding: 8px 12px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 GPS Aktif: Mencari sinyal lokasi akurat...
+    <div id="status_gps" style="padding: 10px 14px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; font-size: 14px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
+        📡 GPS Aktif: Mengambil sinyal lokasi akurat dari HP kamu...
     </div>
 
     <script>
@@ -105,7 +121,7 @@ if st.session_state.sedang_gabung:
                     }
                 },
                 function(error) {
-                    document.getElementById('status_gps').innerHTML = "⚠️ <b>GPS Gagal:</b> Pastikan izin lokasi di HP sudah di-ALLOW (Diizinkan).";
+                    document.getElementById('status_gps').innerHTML = "⚠️ <b>GPS Gagal:</b> Pastikan izin lokasi (Location Permission) di HP/Browser sudah di-ALLOW (Diizinkan).";
                 },
                 { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
             );
@@ -117,11 +133,11 @@ if st.session_state.sedang_gabung:
     setInterval(trackGPS, 30000);
     </script>
     """
-    st.components.v1.html(html_gps_script, height=50)
+    st.components.v1.html(html_gps_script, height=60)
 
 st.markdown("---")
 
-# --- 4. TAMPILAN PETA BERSAMA (STABIL & TIDAK KEDIP) ---
+# --- 5. TAMPILAN PETA BERSAMA (SATU LAYAR UNTUK SEMUA) ---
 col_tittle, col_btn = st.columns([3, 1])
 with col_tittle:
     st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
@@ -133,16 +149,16 @@ with col_btn:
 df_turing = pd.read_sql("SELECT * FROM anggota", conn)
 
 if not df_turing.empty:
-    st.caption(f"Total anggota terpantau aktif di peta: **{len(df_turing)} orang**")
+    st.caption(f"Semua titik lokasi anggota disatukan dalam 1 layar peta.")
     
-    # Hitung titik tengah peta
+    # Hitung titik tengah peta berdasarkan rata-rata posisi anggota
     center_lat = df_turing['lat'].mean()
     center_lon = df_turing['lon'].mean()
     
     if pd.isna(center_lat) or pd.isna(center_lon) or (center_lat == 0 and center_lon == 0):
         center_lat, center_lon = -6.2088, 106.8456
     
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
     
     for idx, row in df_turing.iterrows():
         if row['lat'] == 0.0 and row['lon'] == 0.0:
@@ -162,16 +178,17 @@ if not df_turing.empty:
             icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
         ).add_to(m)
 
+        # Lingkaran area di sekitar marker
         folium.Circle(
             location=[row['lat'], row['lon']],
-            radius=80,
+            radius=100,
             color='red' if is_me else 'blue',
             fill=True,
             fill_opacity=0.15
         ).add_to(m)
 
-    # Render peta stabil tanpa key dinamis yang memicu kedip
+    # Render peta stabil tanpa kedip
     st_folium(m, width=1100, height=520)
 
 else:
-    st.info("Belum ada anggota yang bergabung di sesi turing. Masukkan nama kamu di sidebar untuk mulai membagikan lokasi.")
+    st.info("Belum ada anggota yang bergabung di sesi turing. Masukkan nama kamu di sidebar untuk mulai membagikan lokasi dan melihat peta.")
