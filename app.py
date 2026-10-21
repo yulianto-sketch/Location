@@ -52,9 +52,9 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
 # --- SIDEBAR: KONTROL SESI ---
 st.sidebar.header("⚙️ Sesi Turing")
 
-# JIKA BELUM GABUNG: Tampilkan form login saja
+# JIKA BELUM GABUNG / SUDAH LOGOUT
 if not st.session_state.sedang_gabung:
-    st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
+    st.sidebar.info("Silakan masukkan nama kamu untuk bergabung ke dalam sesi turing.")
     input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
     if st.sidebar.button("🚀 Gabung Sesi Turing", type="primary"):
@@ -65,12 +65,16 @@ if not st.session_state.sedang_gabung:
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
-# JIKA SUDAH GABUNG: Tombol gabung hilang, tampilkan Status, Tombol Logout, & Panel Reset
+    # Tampilan Halaman Utama saat Belum Login
+    st.info("👋 **Selamat datang!** Silakan masukkan nama kamu di sidebar sebelah kiri dan klik **Gabung Sesi Turing** untuk mulai melihat peta bersama dan membagikan lokasi.")
+
+# JIKA SUDAH GABUNG (LOGIN)
 else:
+    # --- SIDEBAR MENU UTAMA ---
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
     st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit).")
     
-    # TOMBOL LOGOUT UTAMA
+    # TOMBOL LOGOUT
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
@@ -80,7 +84,7 @@ else:
         st.session_state.nama_saya = ""
         st.rerun()
 
-    # --- PANEL RESET SEMUA ANGGOTA DENGAN KODE PIN 123 ---
+    # PANEL RESET SEMUA ANGGOTA DENGAN KODE PIN 123
     st.sidebar.markdown("---")
     st.sidebar.write("🛠️ **Panel Reset Grup (Butuh Kode)**")
     pin_input = st.sidebar.text_input("Masukkan Kode Reset:", type="password", key="pin_reset_input")
@@ -98,22 +102,21 @@ else:
         else:
             st.sidebar.error("❌ Kode PIN salah! (Gunakan kode: 123)")
 
-st.sidebar.markdown("---")
+    st.sidebar.markdown("---")
 
-# --- 4. DAFTAR NAMA ANGGOTA AKTIF DI SIDEBAR ---
-st.sidebar.subheader("📋 Anggota Aktif di Grup")
-df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
-if not df_sidebar.empty:
-    st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
-    for idx, row in df_sidebar.iterrows():
-        status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
-        st.sidebar.markdown(f"🏍️ **{row['nama']}**{status_kamu}<br><small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", unsafe_allow_html=True)
-        st.sidebar.markdown("---")
-else:
-    st.sidebar.info("Belum ada anggota yang bergabung.")
+    # --- DAFTAR ANGGOTA AKTIF (HANYA MUNCUL JIKA SUDAH LOGIN) ---
+    st.sidebar.subheader("📋 Anggota Aktif di Grup")
+    df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
+    if not df_sidebar.empty:
+        st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
+        for idx, row in df_sidebar.iterrows():
+            status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
+            st.sidebar.markdown(f"🏍️ **{row['nama']}**{status_kamu}<br><small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", unsafe_allow_html=True)
+            st.sidebar.markdown("---")
+    else:
+        st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-# --- 5. SKRIP JAVASCRIPT SILENT GPS + JAM WIB LOKAL HP ---
-if st.session_state.sedang_gabung:
+    # --- SKRIP JAVASCRIPT SILENT GPS ---
     current_user_name = st.session_state.nama_saya
     
     html_silent_gps = f"""
@@ -158,53 +161,53 @@ if st.session_state.sedang_gabung:
     """
     st.components.v1.html(html_silent_gps, height=50)
 
-# --- 6. TAMPILAN PETA BERSAMA (STABIL 1 LAYAR) ---
-col_tittle, col_btn = st.columns([3, 1])
-with col_tittle:
-    st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
-with col_btn:
-    st.write("")
-    if st.button("🔄 Refresh Peta Manual"):
-        st.rerun()
+    # --- TAMPILAN PETA BERSAMA (HANYA MUNCUL JIKA SUDAH LOGIN) ---
+    col_tittle, col_btn = st.columns([3, 1])
+    with col_tittle:
+        st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
+    with col_btn:
+        st.write("")
+        if st.button("🔄 Refresh Peta Manual"):
+            st.rerun()
 
-df_turing = pd.read_sql("SELECT * FROM anggota", conn)
+    df_turing = pd.read_sql("SELECT * FROM anggota", conn)
 
-if not df_turing.empty:
-    center_lat = df_turing['lat'].mean()
-    center_lon = df_turing['lon'].mean()
-    
-    if pd.isna(center_lat) or pd.isna(center_lon) or (center_lat == 0 and center_lon == 0):
-        center_lat, center_lon = -6.2088, 106.8456
-    
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
-    
-    for idx, row in df_turing.iterrows():
-        if row['lat'] is None or row['lon'] is None or (row['lat'] == 0.0 and row['lon'] == 0.0):
-            continue
+    if not df_turing.empty:
+        center_lat = df_turing['lat'].mean()
+        center_lon = df_turing['lon'].mean()
+        
+        if pd.isna(center_lat) or pd.isna(center_lon) or (center_lat == 0 and center_lon == 0):
+            center_lat, center_lon = -6.2088, 106.8456
+        
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+        
+        for idx, row in df_turing.iterrows():
+            if row['lat'] is None or row['lon'] is None or (row['lat'] == 0.0 and row['lon'] == 0.0):
+                continue
+                
+            is_me = (row['nama'].lower() == st.session_state.nama_saya.lower())
             
-        is_me = (st.session_state.sedang_gabung and row['nama'].lower() == st.session_state.nama_saya.lower())
-        
-        warna_marker = 'red' if is_me else 'blue'
-        ikon_simbol = 'user' if is_me else 'motorcycle'
-        
-        popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small>"
-        
-        folium.Marker(
-            [row['lat'], row['lon']], 
-            popup=folium.Popup(popup_html, max_width=200),
-            tooltip=row['nama'],
-            icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
-        ).add_to(m)
+            warna_marker = 'red' if is_me else 'blue'
+            ikon_simbol = 'user' if is_me else 'motorcycle'
+            
+            popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small>"
+            
+            folium.Marker(
+                [row['lat'], row['lon']], 
+                popup=folium.Popup(popup_html, max_width=200),
+                tooltip=row['nama'],
+                icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
+            ).add_to(m)
 
-        folium.Circle(
-            location=[row['lat'], row['lon']],
-            radius=100,
-            color='red' if is_me else 'blue',
-            fill=True,
-            fill_opacity=0.15
-        ).add_to(m)
+            folium.Circle(
+                location=[row['lat'], row['lon']],
+                radius=100,
+                color='red' if is_me else 'blue',
+                fill=True,
+                fill_opacity=0.15
+            ).add_to(m)
 
-    st_folium(m, width=1100, height=520)
+        st_folium(m, width=1100, height=520)
 
-else:
-    st.info("Belum ada anggota yang bergabung di sesi turing. Masukkan nama kamu di sidebar untuk mulai.")
+    else:
+        st.info("Belum ada posisi anggota lain yang tercatat di peta.")
