@@ -10,11 +10,10 @@ import requests
 st.set_page_config(page_title="Peta Lokasi Grup & SPBU", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup (Google/Email Login)")
 
-# --- 1. DATABASE SQLITE & MIGRASI SKEMA (DIPERBAIKI) ---
+# --- 1. DATABASE SQLITE & MIGRASI SKEMA ---
 def init_db():
     conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
     cursor = conn.cursor()
-    # Pastikan email didefinisikan sebagai PRIMARY KEY agar ON CONFLICT berjalan normal
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS anggota (
             email TEXT PRIMARY KEY,
@@ -148,11 +147,11 @@ if st.session_state.user_email == "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
+            # Menggunakan INSERT OR REPLACE standar yang kompatibel di semua versi SQLite
             cursor.execute('''
-                INSERT INTO anggota (email, nama, lat, lon, waktu, status_aktif)
-                VALUES (?, ?, ?, ?, ?, 1)
-                ON CONFLICT(email) DO UPDATE SET nama=?, status_aktif=1
-            ''', (clean_email, clean_name, 0.0, 0.0, "Mencari Sinyal GPS...", clean_name))
+                INSERT OR REPLACE INTO anggota (email, nama, lat, lon, waktu, status_aktif)
+                VALUES (?, ?, COALESCE((SELECT lat FROM anggota WHERE email = ?), 0.0), COALESCE((SELECT lon FROM anggota WHERE email = ?), 0.0), COALESCE((SELECT waktu FROM anggota WHERE email = ?), 'Mencari Sinyal GPS...'), 1)
+            ''', (clean_email, clean_name, clean_email, clean_email, clean_email))
             conn.commit()
             
             st.session_state.user_email = clean_email
@@ -393,4 +392,4 @@ else:
 
     else:
         st.warning("📡 **Sedang menyingkronkan lokasi presisi dari HP kamu...**")
-        st.info("💡 *Tips:* Jika file database lama masih tersimpan di server Anda, silakan hapus file **`lokasi_data.db`** lewat terminal/file manager agar struktur tabel barunya bisa terbentuk sempurna.")
+        st.info("Pastikan kamu mengeklik tombol **Allow / Izinkan Lokasi** pada pop-up izin browser HP.")
