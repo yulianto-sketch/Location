@@ -4,6 +4,7 @@ import folium
 from streamlit_folium import st_folium
 import sqlite3
 from datetime import datetime
+import time
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="Peta Turing Privat", layout="wide")
@@ -31,6 +32,10 @@ if "nama_saya" not in st.session_state:
     st.session_state.nama_saya = ""
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
+if "my_lat" not in st.session_state:
+    st.session_state.my_lat = 0.0
+if "my_lon" not in st.session_state:
+    st.session_state.my_lon = 0.0
 
 # --- SIDEBAR: KONTROL SESI ---
 st.sidebar.header("⚙️ Sesi Turing")
@@ -58,65 +63,21 @@ else:
         
         st.session_state.sedang_gabung = False
         st.session_state.nama_saya = ""
+        st.session_state.my_lat = 0.0
+        st.session_state.my_lon = 0.0
         st.rerun()
 
-# --- 3. AUTO GPS SENDER (HTML/JS INTEGRATION) ---
+# --- 3. PROSES LOKASI GPS & AUTO-UPDATE 1 MENIT ---
 if st.session_state.sedang_gabung:
     st.subheader(f"📡 Status Lokasi Live: {st.session_state.nama_saya}")
     
-    # Komponen JS yang otomatis mengambil koordinat HP & update ke query params / session
-    html_autogps = f"""
-    <div id="status" style="padding: 12px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; border-left: 4px solid #0288d1;">
-        ⏳ Menghubungkan ke GPS HP...
-    </div>
-
-    <script>
-    function sendLocation() {{
-        const statusDiv = document.getElementById('status');
-        if (navigator.geolocation) {{
-            navigator.geolocation.getCurrentPosition(
-                function(position) {{
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    
-                    statusDiv.innerHTML = "<b>✅ GPS Terhubung Akurat!</b><br>Latitude: " + lat + "<br>Longitude: " + lon;
-                    
-                    // Mengirim data ke URL param untuk ditangkap Streamlit
-                    const url = new URL(window.parent.location.href);
-                    if (url.searchParams.get("lat") != lat || url.searchParams.get("lon") != lon) {{
-                        url.searchParams.set("lat", lat);
-                        url.searchParams.set("lon", lon);
-                        window.parent.location.href = url.href;
-                    }}
-                }},
-                function(error) {{
-                    switch(error.code) {{
-                        case error.PERMISSION_DENIED:
-                            statusDiv.innerHTML = "❌ <b>Akses GPS Ditolak!</b> Mohon aktifkan izin lokasi di browser HP kamu.";
-                            break;
-                        default:
-                            statusDiv.innerHTML = "⚠️ Gagal mengambil sinyal GPS. Pastikan Lokasi/GPS HP aktif.";
-                    }}
-                }},
-                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
-            );
-        }} else {{
-            statusDiv.innerHTML = "❌ Browser tidak mendukung Geolocation.";
-        }}
-    }}
-
-    // Jalankan otomatis begitu komponen dimuat
-    sendLocation();
-    </script>
-    """
-    st.components.v1.html(html_autogps, height=90)
-
-    # Tangkap data GPS otomatis dari URL Query Parameters
+    # Tangkap parameter latitude & longitude dari Query Params
     query_params = st.query_params
     if "lat" in query_params and "lon" in query_params:
         try:
-            auto_lat = float(query_params["lat"])
-            auto_lon = float(query_params["lon"])
+            st.session_state.my_lat = float(query_params["lat"])
+            st.session_state.my_lon = float(query_params["lon"])
+            
             waktu_sekarang = datetime.now().strftime("%H:%M:%S")
             
             # Simpan/Update otomatis ke Database SQLite
@@ -124,33 +85,77 @@ if st.session_state.sedang_gabung:
             cursor.execute('''
                 INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
                 VALUES (?, ?, ?, ?)
-            ''', (st.session_state.nama_saya, auto_lat, auto_lon, waktu_sekarang))
+            ''', (st.session_state.nama_saya, st.session_state.my_lat, st.session_state.my_lon, waktu_sekarang))
             conn.commit()
         except ValueError:
             pass
 
-    col_btn1, col_btn2 = st.columns([1, 4])
-    with col_btn1:
-        if st.button("🔄 Update Posisi HP Saya"):
-            st.rerun()
+    # Komponen JS Geolocation + Timer Auto-Refresh 60 Detik (1 Menit)
+    html_gps_script = f"""
+    <div id="status_box" style="padding: 10px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; border-left: 4px solid #0288d1;">
+        ⏳ Menghubungkan ke GPS HP...
+    </div>
+
+    <script>
+    function updateGPS() {{
+        const statusBox = document.getElementById('status_box');
+        if (navigator.geolocation) {{
+            navigator.geolocation.getCurrentPosition(
+                function(position) {{
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    statusBox.innerHTML = "<b>✅ GPS Terkoneksi Presisi!</b><br>Lat: " + lat + " | Lon: " + lon + "<br><i>Auto-update ulang dalam 60 detik...</i>";
+                    
+                    // Mengirimkan parameter lokasi ke URL tanpa me-reload paksa iframe
+                    const currentUrl = new URL(window.parent.location.href);
+                    if (currentUrl.searchParams.get("lat") != lat || currentUrl.searchParams.get("lon") != lon) {{
+                        currentUrl.searchParams.set("lat", lat);
+                        currentUrl.searchParams.set("lon", lon);
+                        window.parent.history.replaceState({{}}, '', currentUrl.href);
+                    }}
+                }},
+                function(error) {{
+                    statusBox.innerHTML = "⚠️ Gagal mengambil GPS. Pastikan izin lokasi/GPS di HP sudah di-ALLOW (Diizinkan).";
+                }},
+                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
+            );
+        }} else {{
+            statusBox.innerHTML = "❌ Browser tidak mendukung Geolocation.";
+        }}
+    }}
+
+    // Jalankan pertama kali
+    updateGPS();
+    </script>
+    """
+    st.components.v1.html(html_gps_script, height=100)
 
 st.markdown("---")
 
-# --- 4. PETA BERSAMA (SATU LAYAR UNTUK SEMUA ANGGOTA) ---
+# --- 4. TAMPILAN PETA BERSAMA (SATU LAYAR UNTUK SEMUA) ---
 st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
 
 df_turing = pd.read_sql("SELECT * FROM anggota", conn)
 
 if not df_turing.empty:
-    st.write(f"Total anggota terpantau aktif: **{len(df_turing)} orang**")
+    st.write(f"Total anggota aktif di peta: **{len(df_turing)} orang**")
     
-    # Hitung titik tengah berdasarkan seluruh lokasi anggota yang ada
+    # Hitung titik tengah peta
     center_lat = df_turing['lat'].mean()
     center_lon = df_turing['lon'].mean()
     
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+    # Jika koordinat masih 0, default ke lokasi acuan sementara
+    if center_lat == 0 or center_lon == 0:
+        center_lat, center_lon = -6.2088, 106.8456
+    
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
     
     for idx, row in df_turing.iterrows():
+        # Jangan tampilkan jika koordinat bernilai 0.0 (belum dapat GPS)
+        if row['lat'] == 0.0 and row['lon'] == 0.0:
+            continue
+            
         is_me = (st.session_state.sedang_gabung and row['nama'].lower() == st.session_state.nama_saya.lower())
         
         warna_marker = 'red' if is_me else 'blue'
@@ -165,15 +170,21 @@ if not df_turing.empty:
             icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
         ).add_to(m)
 
-        # Lingkaran halus di sekitar titik
         folium.Circle(
             location=[row['lat'], row['lon']],
-            radius=100,
+            radius=80,
             color='red' if is_me else 'blue',
             fill=True,
-            fill_opacity=0.1
+            fill_opacity=0.15
         ).add_to(m)
 
-    st_folium(m, width=1100, height=500)
+    # Tampilkan Peta Folium dengan key dinamis agar tidak blank
+    st_folium(m, width=1100, height=500, key=f"map_{int(time.time() // 10)}")
+
 else:
-    st.info("Belum ada anggota yang bergabung. Masukkan nama kamu di sidebar untuk mulai membagikan lokasi.")
+    st.info("Belum ada anggota yang bergabung. Masukkan nama kamu di sidebar untuk bergabung.")
+
+# --- 5. AUTOMATIC LOOP REFRESH PER 1 MENIT (60 DETIK) ---
+if st.session_state.sedang_gabung:
+    time.sleep(60)  # Menunggu 60 detik (1 menit)
+    st.rerun()      # Re-run skrip otomatis untuk memperbarui GPS dan peta bersama
