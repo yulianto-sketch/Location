@@ -49,7 +49,6 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
     radius_meters = int(radius_km * 1000)
     overpass_url = "https://overpass-api.de/api/interpreter"
     
-    # Query diperluas untuk mengambil seluruh elemen SPBU tanpa batas kecil
     query = f"""
     [out:json][timeout:15];
     (
@@ -68,7 +67,6 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
             lon = element.get('lon') or element.get('center', {}).get('lon')
             tags = element.get('tags', {})
             
-            # Deteksi nama SPBU / Operator
             brand = tags.get('brand', tags.get('operator', tags.get('name', 'SPBU / Pom Bensin')))
             if brand == 'SPBU / Pom Bensin' and tags.get('name'):
                 brand = tags.get('name')
@@ -196,7 +194,7 @@ else:
     member_list = df_members['nama'].tolist() if not df_members.empty else []
     
     # 1. KICK ANGGOTA MANUAL
-    st.sidebar.write("👢 **Kick Anggota**")
+    st.sidebar.write("BOOT **Kick Anggota**")
     selected_member = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + member_list)
     kick_pin = st.sidebar.text_input("Password Kick:", type="password", key="kick_pin_input")
     
@@ -363,12 +361,19 @@ else:
                 if spbu_key not in spbu_added:
                     spbu_added.add(spbu_key)
                     
+                    # Pembedaan Warna Ikon: Kuning untuk Pertamina, Oranye untuk SPBU Lain
+                    nama_spbu_lower = spbu['nama'].lower()
+                    if 'pertamina' in nama_spbu_lower:
+                        warna_spbu = 'yellow'
+                    else:
+                        warna_spbu = 'orange'
+                    
                     popup_spbu = f"⛽ <b>{spbu['nama']}</b><br><small>Jarak: ~{dist:.1f} km dari posisi kamu</small>"
                     folium.Marker(
                         [spbu['lat'], spbu['lon']],
                         popup=folium.Popup(popup_spbu, max_width=220),
                         tooltip=f"⛽ {spbu['nama']} ({dist:.1f} km)",
-                        icon=folium.Icon(color='orange', icon='gas-pump', prefix='fa')
+                        icon=folium.Icon(color=warna_spbu, icon='gas-pump', prefix='fa')
                     ).add_to(m)
 
         st_folium(m, width=1100, height=520, key="live_map")
