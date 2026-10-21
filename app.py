@@ -7,26 +7,23 @@ import math
 import requests
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="Peta Lokasi Privat", layout="wide")
-st.title("📍 Live Tracking Lokasi Grup & SPBU Radius 30km")
+st.set_page_config(page_title="Peta Lokasi Grup & SPBU", layout="wide")
+st.title("📍 Live Tracking Lokasi Grup (Google/Email Login)")
 
-# --- 1. DATABASE SQLITE & MIGRASI SKEMA OTOMATIS ---
+# --- 1. DATABASE SQLITE & MIGRASI SKEMA ---
 def init_db():
     conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS anggota (
-            nama TEXT PRIMARY KEY,
+            email TEXT PRIMARY KEY,
+            nama TEXT,
             lat REAL,
             lon REAL,
             waktu TEXT,
             status_aktif INTEGER DEFAULT 1
         )
     ''')
-    try:
-        cursor.execute("ALTER TABLE anggota ADD COLUMN status_aktif INTEGER DEFAULT 1")
-    except sqlite3.OperationalError:
-        pass
     conn.commit()
     return conn
 
@@ -43,24 +40,22 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --- FUNGSI AMBIL SEMUA SPBU REAL-TIME (RADIUS 30KM) ---
-@st.cache_data(ttl=300) # Cache 5 menit agar cepat & tidak membebani koneksi
+# --- FUNGSI AMBIL DATA SPBU OVERPASS API (RADIUS 30KM - MAX 500 TITIK) ---
+@st.cache_data(ttl=300)
 def fetch_nearby_spbu(center_lat, center_lon, radius_km=30):
     radius_meters = int(radius_km * 1000)
     overpass_url = "https://overpass-api.de/api/interpreter"
     
-    # Query lengkap untuk mengambil hingga 300 SPBU dalam radius 30 km
     query = f"""
-    [out:json][timeout:20];
+    [out:json][timeout:25];
     (
       node["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
       way["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
-      relation["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
     );
-    out center 300;
+    out center 500;
     """
     try:
-        resp = requests.post(overpass_url, data={'data': query}, timeout=15)
+        resp = requests.post(overpass_url, data={'data': query}, timeout=20)
         data = resp.json()
         spbu_list = []
         for element in data.get('elements', []):
@@ -68,10 +63,7 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=30):
             lon = element.get('lon') or element.get('center', {}).get('lon')
             tags = element.get('tags', {})
             
-            # Deteksi nama SPBU / Brand
-            brand = tags.get('brand', tags.get('operator', tags.get('name', 'SPBU / Pom Bensin')))
-            if brand in ['SPBU / Pom Bensin', 'fuel'] and tags.get('name'):
-                brand = tags.get('name')
+            brand = tags.get('name') or tags.get('brand') or tags.get('operator') or 'SPBU / Pom Bensin'
                 
             if lat and lon:
                 spbu_list.append({
@@ -81,137 +73,140 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=30):
                 })
         return spbu_list
     except Exception:
-        # Fallback daftar SPBU utama jika koneksi server API sibuk
         return [
             {"nama": "SPBU Pertamina Rajeg", "lat": -6.1558, "lon": 106.5083},
             {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
             {"nama": "SPBU Rest Area KM 13.5 Tangerang", "lat": -6.2162, "lon": 106.6912},
             {"nama": "SPBU Pertamina Pasar Kemis", "lat": -6.1732, "lon": 106.5412},
             {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
-            {"nama": "SPBU Pertamina Balaraja", "lat": -6.1912, "lon": 106.4521},
+            {"nama": "SPBU Pertamina Sangiang / Toha", "lat": -6.1780, "lon": 106.6120},
         ]
 
-# --- 2. BACA URL PARAMETER UNTUK AUTO-LOGIN BUKA TAB BARU ---
+# --- 2. MANAJEMEN SESI URL & AUTO RECOVERY ---
 query_params = st.query_params
 
-if "nama_saya" not in st.session_state:
-    st.session_state.nama_saya = ""
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
+if "user_name" not in st.session_state:
+    st.session_state.user_name = ""
 
-# Auto-recovery sesi jika ada parameter user di URL
-if st.session_state.nama_saya == "" and "user" in query_params:
-    user_from_url = query_params["user"]
+# Recovery sesi dari parameter URL
+if st.session_state.user_email == "" and "email" in query_params:
+    email_url = query_params["email"]
     cursor = conn.cursor()
-    cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (user_from_url,))
-    valid_user = cursor.fetchone()
-    if valid_user:
-        st.session_state.nama_saya = valid_user[0]
+    cursor.execute("SELECT email, nama FROM anggota WHERE email = ? AND status_aktif = 1", (email_url,))
+    user_data = cursor.fetchone()
+    if user_data:
+        st.session_state.user_email = user_data[0]
+        st.session_state.user_name = user_data[1]
 
-# --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-KICK / DI-RESET ADMIN) ---
-if st.session_state.nama_saya != "":
+# Cek integritas sesi (apabila user dikeluarkan oleh admin)
+if st.session_state.user_email != "":
     cursor = conn.cursor()
-    cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (st.session_state.nama_saya,))
-    active_user = cursor.fetchone()
-    if not active_user:
-        st.session_state.nama_saya = ""
+    cursor.execute("SELECT email FROM anggota WHERE email = ? AND status_aktif = 1", (st.session_state.user_email,))
+    active_check = cursor.fetchone()
+    if not active_check:
+        st.session_state.user_email = ""
+        st.session_state.user_name = ""
         st.query_params.clear()
 
-# --- 4. TANGKAP DATA GPS REAL-TIME DARI PARAMETER URL ---
-if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
+# --- 3. TANGKAP DATA GPS REAL-TIME DARI URL ---
+if "lat" in query_params and "lon" in query_params and "email" in query_params and "time" in query_params:
     try:
-        u_name = query_params["user"]
+        u_email = query_params["email"]
         u_lat = float(query_params["lat"])
         u_lon = float(query_params["lon"])
         waktu_sekarang = query_params["time"]
         
         if u_lat != 0.0 and u_lon != 0.0:
             cursor = conn.cursor()
-            cursor.execute("SELECT status_aktif FROM anggota WHERE nama = ?", (u_name,))
+            cursor.execute("SELECT status_aktif FROM anggota WHERE email = ?", (u_email,))
             res = cursor.fetchone()
             
             if res and res[0] == 1:
                 cursor.execute('''
-                    UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE nama = ?
-                ''', (u_lat, u_lon, waktu_sekarang, u_name))
+                    UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE email = ?
+                ''', (u_lat, u_lon, waktu_sekarang, u_email))
                 conn.commit()
     except ValueError:
         pass
 
-# --- SIDEBAR: KONTROL SESI ---
-st.sidebar.header("⚙️ Sesi Lokasi")
+# --- SIDEBAR: KONTROL LOGIN EMAIL ---
+st.sidebar.header("⚙️ Akses Akun Lokasi")
 
-# JIKA BELUM LOGIN / BELUM ADA NAMA
-if st.session_state.nama_saya == "":
-    st.sidebar.info("Silakan masukkan nama kamu untuk bergabung ke dalam sesi lokasi.")
-    input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
+# JIKA BELUM LOGIN
+if st.session_state.user_email == "":
+    st.sidebar.info("🔑 Silakan masuk menggunakan Email Google HP kamu untuk mengaktifkan izin bagikan lokasi.")
     
-    if st.sidebar.button("🚀 Gabung Sesi Lokasi", type="primary"):
-        if input_nama.strip() != "":
+    input_email = st.sidebar.text_input("Alamat Email Google HP:", placeholder="contoh: lian@gmail.com")
+    input_nama = st.sidebar.text_input("Nama Panggilan:", placeholder="contoh: Mas Lian")
+    
+    if st.sidebar.button("🔐 Masuk & Izinkan Lokasi", type="primary"):
+        if input_email.strip() != "" and input_nama.strip() != "":
+            clean_email = input_email.strip().lower()
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (clean_name,))
-            existing = cursor.fetchone()
+            cursor.execute('''
+                INSERT INTO anggota (email, nama, lat, lon, waktu, status_aktif)
+                VALUES (?, ?, ?, ?, ?, 1)
+                ON CONFLICT(email) DO UPDATE SET nama=?, status_aktif=1
+            ''', (clean_email, clean_name, 0.0, 0.0, "Mencari Sinyal GPS...", clean_name))
+            conn.commit()
             
-            if existing:
-                st.sidebar.error("❌ Nama tersebut sedang aktif digunakan. Gunakan nama panggilan lain.")
-            else:
-                st.session_state.nama_saya = clean_name
-                cursor.execute('''
-                    INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu, status_aktif)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (clean_name, 0.0, 0.0, "Mencari Sinyal GPS Real...", 1))
-                conn.commit()
-                
-                st.query_params["user"] = clean_name
-                st.rerun()
+            st.session_state.user_email = clean_email
+            st.session_state.user_name = clean_name
+            st.query_params["email"] = clean_email
+            st.rerun()
         else:
-            st.sidebar.error("Nama tidak boleh kosong!")
+            st.sidebar.error("Email dan Nama Panggilan wajib diisi!")
 
-    st.info("👋 **Selamat datang!** Masukkan nama kamu di sidebar kiri untuk masuk ke peta grup lokasi.")
+    st.info("👋 **Selamat datang!** Silakan *login* melalui sidebar untuk bergabung ke peta lokasi grup.")
 
 # JIKA SUDAH LOGIN
 else:
-    st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 Sync GPS & Refresh Peta Serentak Aktif (tiap 30 detik).")
+    st.sidebar.success(f"Login sebagai: **{st.session_state.user_name}**")
+    st.sidebar.caption(f"📧 {st.session_state.user_email}")
+    st.sidebar.caption("📡 GPS & Refresh Peta Serentak Aktif (30 Detik).")
     
-    # TOMBOL LOGOUT PRIBADI
+    # LOGOUT
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
+        cursor.execute("DELETE FROM anggota WHERE email = ?", (st.session_state.user_email,))
         conn.commit()
         
-        st.session_state.nama_saya = ""
+        st.session_state.user_email = ""
+        st.session_state.user_name = ""
         st.query_params.clear()
         
-        st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
+        st.components.v1.html("<script>localStorage.removeItem('lokasi_email'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
         st.rerun()
 
-    # --- PANEL KICK ANGGOTA & RESET ALL (PASSWORD: 123) ---
+    # --- PANEL ADMIN (PIN: 123) ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛠️ Panel Admin (PIN: 123)")
     
-    df_members = pd.read_sql("SELECT nama FROM anggota WHERE status_aktif = 1", conn)
-    member_list = df_members['nama'].tolist() if not df_members.empty else []
+    df_members = pd.read_sql("SELECT email, nama FROM anggota WHERE status_aktif = 1", conn)
+    member_dict = dict(zip(df_members['nama'], df_members['email'])) if not df_members.empty else {}
     
-    # 1. KICK ANGGOTA MANUAL
     st.sidebar.write("👢 **Kick Anggota**")
-    selected_member = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + member_list)
+    selected_name = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + list(member_dict.keys()))
     kick_pin = st.sidebar.text_input("Password Kick:", type="password", key="kick_pin_input")
     
     if st.sidebar.button("🚫 Kick Anggota", type="secondary"):
         if kick_pin == "123":
-            if selected_member != "-- Pilih --":
+            if selected_name != "-- Pilih --":
+                target_email = member_dict[selected_name]
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM anggota WHERE nama = ?", (selected_member,))
+                cursor.execute("DELETE FROM anggota WHERE email = ?", (target_email,))
                 conn.commit()
-                st.sidebar.success(f"Anggota '{selected_member}' berhasil dikeluarkan!")
+                st.sidebar.success(f"Anggota '{selected_name}' berhasil dikeluarkan!")
                 st.rerun()
             else:
                 st.sidebar.error("Pilih anggota yang ingin dikeluarkan!")
         else:
             st.sidebar.error("❌ Password salah! (PIN: 123)")
 
-    # 2. RESET SEMUA ANGGOTA
     st.sidebar.markdown("---")
     st.sidebar.write("🗑️ **Reset Semua Anggota**")
     pin_input = st.sidebar.text_input("Password Reset All:", type="password", key="pin_reset_input")
@@ -222,11 +217,12 @@ else:
             cursor.execute("DELETE FROM anggota")
             conn.commit()
             
-            st.session_state.nama_saya = ""
+            st.session_state.user_email = ""
+            st.session_state.user_name = ""
             st.query_params.clear()
             st.success("Semua data sesi berhasil di-reset!")
             
-            st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
+            st.components.v1.html("<script>localStorage.removeItem('lokasi_email'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
             st.rerun()
         else:
             st.sidebar.error("❌ Password salah! (PIN: 123)")
@@ -235,11 +231,11 @@ else:
 
     # --- DAFTAR ANGGOTA AKTIF ---
     st.sidebar.subheader("📋 Anggota Aktif di Grup")
-    df_sidebar = pd.read_sql("SELECT nama, lat, lon, waktu FROM anggota WHERE status_aktif = 1", conn)
+    df_sidebar = pd.read_sql("SELECT nama, email, lat, lon, waktu FROM anggota WHERE status_aktif = 1", conn)
     if not df_sidebar.empty:
         st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
         for idx, row in df_sidebar.iterrows():
-            status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
+            status_kamu = " (Kamu)" if row['email'] == st.session_state.user_email else ""
             st_gps_info = "🟢 GPS Terhubung" if (row['lat'] != 0.0 and row['lat'] is not None) else "🟡 Mencari Sinyal GPS..."
             st.sidebar.markdown(
                 f"📍 **{row['nama']}**{status_kamu}<br>"
@@ -248,32 +244,43 @@ else:
                 unsafe_allow_html=True
             )
             st.sidebar.markdown("---")
-    else:
-        st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-    # --- SKRIP JAVASCRIPT: UPDATE GPS & AUTO-RELOAD HARIAN SETIAP 30 DETIK ---
-    current_user_name = st.session_state.nama_saya
+    # --- SKRIP JAVASCRIPT: AUTO RECOVERY & REAL-TIME GPS SYNC ---
+    current_email = st.session_state.user_email
     
-    html_synchronized_gps = f"""
+    html_gps_script = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Sync GPS Serentak:</b> Mengirim koordinat & memperbarui WIB secara otomatis tiap 30 detik.
+        📡 <b>Izin Share Live Terhubung:</b> Mengirim koordinat GPS & memperbarui jam WIB otomatis tiap 30 detik.
     </div>
 
     <script>
-    const userName = "{current_user_name}";
+    const userEmail = "{current_email}";
     
-    if (userName && userName !== "") {{
-        localStorage.setItem("lokasi_user", userName);
+    if (userEmail && userEmail !== "") {{
+        localStorage.setItem("lokasi_email", userEmail);
     }}
 
-    const savedUser = localStorage.getItem("lokasi_user");
+    const savedEmail = localStorage.getItem("lokasi_email");
     const currentUrlObj = new URL(window.parent.location.href);
-    if (savedUser && !currentUrlObj.searchParams.has("user")) {{
-        currentUrlObj.searchParams.set("user", savedUser);
+    if (savedEmail && !currentUrlObj.searchParams.has("email")) {{
+        currentUrlObj.searchParams.set("email", savedEmail);
         window.parent.location.href = currentUrlObj.href;
     }}
 
-    function sendSynchronizedGPS() {{
+    // Screen Wake Lock agar layar HP tetap menyala saat dipasang di stang
+    let wakeLock = null;
+    async function requestWakeLock() {{
+        try {{
+            if ('wakeLock' in navigator) {{
+                wakeLock = await navigator.wakeLock.request('screen');
+            }}
+        }} catch (err) {{
+            console.log("Wake Lock Error: " + err.message);
+        }}
+    }}
+    requestWakeLock();
+
+    function sendGPSData() {{
         if (navigator.geolocation) {{
             navigator.geolocation.getCurrentPosition(
                 function(position) {{
@@ -287,7 +294,7 @@ else:
                     const timeWIB = hours + ":" + minutes + ":" + seconds;
                     
                     const currentUrl = new URL(window.parent.location.href);
-                    currentUrl.searchParams.set("user", userName);
+                    currentUrl.searchParams.set("email", userEmail);
                     currentUrl.searchParams.set("lat", lat);
                     currentUrl.searchParams.set("lon", lon);
                     currentUrl.searchParams.set("time", timeWIB);
@@ -302,10 +309,17 @@ else:
         }}
     }}
 
-    setInterval(sendSynchronizedGPS, 30000);
+    setInterval(sendGPSData, 30000);
+
+    document.addEventListener("visibilitychange", function() {{
+        if (document.visibilityState === 'visible') {{
+            requestWakeLock();
+            sendGPSData();
+        }}
+    }});
     </script>
     """
-    st.components.v1.html(html_synchronized_gps, height=50)
+    st.components.v1.html(html_gps_script, height=50)
 
     # --- TAMPILAN PETA BERSAMA ---
     st.subheader("🗺️ Peta Pantauan Anggota & SPBU Radius Max 30 KM")
@@ -314,7 +328,7 @@ else:
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
-        my_data = df_valid[df_valid['nama'].str.lower() == st.session_state.nama_saya.lower()]
+        my_data = df_valid[df_valid['email'] == st.session_state.user_email]
         
         if not my_data.empty:
             center_lat = my_data.iloc[0]['lat']
@@ -327,7 +341,7 @@ else:
         
         # 1. MARKER SELURUH ANGGOTA
         for idx, row in df_valid.iterrows():
-            is_me = (row['nama'].lower() == st.session_state.nama_saya.lower())
+            is_me = (row['email'] == st.session_state.user_email)
             
             warna_marker = 'red' if is_me else 'blue'
             ikon_simbol = 'user' if is_me else 'map-marker'
@@ -349,20 +363,18 @@ else:
                 fill_opacity=0.2
             ).add_to(m)
 
-        # 2. MARKER SPBU LENGKAP DI RADIUS MAX 30 KM
+        # 2. MARKER SPBU (RADIUS MAX 30 KM)
         spbu_data = fetch_nearby_spbu(center_lat, center_lon, radius_km=30)
         spbu_added = set()
         
         for spbu in spbu_data:
             dist = calculate_distance(center_lat, center_lon, spbu['lat'], spbu['lon'])
             
-            # Filter ketat maksimal 30 KM dari titik user login
             if dist <= 30.0:
                 spbu_key = (round(spbu['lat'], 4), round(spbu['lon'], 4))
                 if spbu_key not in spbu_added:
                     spbu_added.add(spbu_key)
                     
-                    # Warna Kuning untuk Pertamina, Warna Oranye untuk Merek Lain
                     nama_spbu_lower = spbu['nama'].lower()
                     if 'pertamina' in nama_spbu_lower:
                         warna_spbu = 'yellow'
