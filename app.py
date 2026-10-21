@@ -7,18 +7,16 @@ import math
 import requests
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="Peta Lokasi Grup & SPBU", layout="wide")
-st.title("📍 Live Tracking Lokasi Grup (Google/Email Login)")
+st.set_page_config(page_title="Peta Touring & SPBU", layout="wide")
+st.title("📍 Live Tracking Touring Rombongan")
 
-# --- 1. DATABASE SQLITE MENGGUNAKAN TABEL VERSI BARU ---
+# --- 1. INISIALISASI DATABASE SQLITE (BERBASIS NAMA UNIK) ---
 def init_db():
-    conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
+    conn = sqlite3.connect('lokasi_touring.db', check_same_thread=False)
     cursor = conn.cursor()
-    # Menggunakan nama tabel 'anggota_v2' untuk memastikan struktur PRIMARY KEY bersih dari konflik lama
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS anggota_v2 (
-            email TEXT PRIMARY KEY,
-            nama TEXT,
+        CREATE TABLE IF NOT EXISTS peserta (
+            nama TEXT PRIMARY KEY,
             lat REAL,
             lon REAL,
             waktu TEXT,
@@ -41,7 +39,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --- FUNGSI AMBIL DATA SPBU OVERPASS API (RADIUS 30KM - MAX 500 TITIK) ---
+# --- FUNGSI AMBIL DATA SPBU OVERPASS API (RADIUS 30KM) ---
 @st.cache_data(ttl=300)
 def fetch_nearby_spbu(center_lat, center_lon, radius_km=30):
     radius_meters = int(radius_km * 1000)
@@ -63,333 +61,213 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=30):
             lat = element.get('lat') or element.get('center', {}).get('lat')
             lon = element.get('lon') or element.get('center', {}).get('lon')
             tags = element.get('tags', {})
-            
             brand = tags.get('name') or tags.get('brand') or tags.get('operator') or 'SPBU / Pom Bensin'
                 
             if lat and lon:
-                spbu_list.append({
-                    "nama": brand,
-                    "lat": lat,
-                    "lon": lon
-                })
+                spbu_list.append({"nama": brand, "lat": lat, "lon": lon})
         return spbu_list
     except Exception:
         return [
             {"nama": "SPBU Pertamina Rajeg", "lat": -6.1558, "lon": 106.5083},
             {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
-            {"nama": "SPBU Rest Area KM 13.5 Tangerang", "lat": -6.2162, "lon": 106.6912},
-            {"nama": "SPBU Pertamina Pasar Kemis", "lat": -6.1732, "lon": 106.5412},
-            {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
-            {"nama": "SPBU Pertamina Sangiang / Toha", "lat": -6.1780, "lon": 106.6120},
+            {"nama": "SPBU Rest Area KM 13.5", "lat": -6.2162, "lon": 106.6912},
+            {"nama": "SPBU Shell BSD", "lat": -6.3012, "lon": 106.6534},
         ]
 
-# --- 2. MANAJEMEN SESI URL & AUTO RECOVERY ---
+# --- 2. MANAJEMEN SESI BERBASIS NAMA ---
 query_params = st.query_params
 
-if "user_email" not in st.session_state:
-    st.session_state.user_email = ""
 if "user_name" not in st.session_state:
     st.session_state.user_name = ""
 
 # Recovery sesi dari parameter URL
-if st.session_state.user_email == "" and "email" in query_params:
-    email_url = query_params["email"]
+if st.session_state.user_name == "" and "nama" in query_params:
+    nama_url = query_params["nama"]
     cursor = conn.cursor()
-    cursor.execute("SELECT email, nama FROM anggota_v2 WHERE email = ? AND status_aktif = 1", (email_url,))
+    cursor.execute("SELECT nama FROM peserta WHERE nama = ? AND status_aktif = 1", (nama_url,))
     user_data = cursor.fetchone()
     if user_data:
-        st.session_state.user_email = user_data[0]
-        st.session_state.user_name = user_data[1]
+        st.session_state.user_name = user_data[0]
 
-# Cek integritas sesi (apabila user dikeluarkan oleh admin)
-if st.session_state.user_email != "":
-    cursor = conn.cursor()
-    cursor.execute("SELECT email FROM anggota_v2 WHERE email = ? AND status_aktif = 1", (st.session_state.user_email,))
-    active_check = cursor.fetchone()
-    if not active_check:
-        st.session_state.user_email = ""
-        st.session_state.user_name = ""
-        st.query_params.clear()
-
-# --- 3. TANGKAP DATA GPS REAL-TIME DARI URL ---
-if "lat" in query_params and "lon" in query_params and "email" in query_params and "time" in query_params:
+# --- 3. TANGKAP DATA GPS DARI URL ---
+if "lat" in query_params and "lon" in query_params and "nama" in query_params and "time" in query_params:
     try:
-        u_email = query_params["email"]
+        u_nama = query_params["nama"]
         u_lat = float(query_params["lat"])
         u_lon = float(query_params["lon"])
         waktu_sekarang = query_params["time"]
         
         if u_lat != 0.0 and u_lon != 0.0:
             cursor = conn.cursor()
-            cursor.execute("SELECT status_aktif FROM anggota_v2 WHERE email = ?", (u_email,))
-            res = cursor.fetchone()
-            
-            if res and res[0] == 1:
-                cursor.execute('''
-                    UPDATE anggota_v2 SET lat = ?, lon = ?, waktu = ? WHERE email = ?
-                ''', (u_lat, u_lon, waktu_sekarang, u_email))
-                conn.commit()
+            cursor.execute('''
+                UPDATE peserta SET lat = ?, lon = ?, waktu = ? WHERE nama = ?
+            ''', (u_lat, u_lon, waktu_sekarang, u_nama))
+            conn.commit()
     except ValueError:
         pass
 
-# --- SIDEBAR: KONTROL LOGIN EMAIL ---
-st.sidebar.header("⚙️ Akses Akun Lokasi")
+# --- SIDEBAR: KONTROL MASUK & ADMIN ---
+st.sidebar.header("⚙️ Konfigurasi Touring")
 
-# JIKA BELUM LOGIN
-if st.session_state.user_email == "":
-    st.sidebar.info("🔑 Silakan masuk menggunakan Email Google HP kamu untuk mengaktifkan izin bagikan lokasi.")
+if st.session_state.user_name == "":
+    st.sidebar.info("👋 Masukkan nama panggilan unik untuk mulai membagikan lokasi.");
     
-    input_email = st.sidebar.text_input("Alamat Email Google HP:", placeholder="contoh: lian@gmail.com")
-    input_nama = st.sidebar.text_input("Nama Panggilan:", placeholder="contoh: Mas Lian")
+    input_nama = st.sidebar.text_input("Nama Panggilan:", placeholder="Contoh: Mas Lian")
     
-    if st.sidebar.button("🔐 Masuk & Izinkan Lokasi", type="primary"):
-        if input_email.strip() != "" and input_nama.strip() != "":
-            clean_email = input_email.strip().lower()
+    if st.sidebar.button("🚀 Gabung ke Peta", type="primary"):
+        if input_nama.strip() != "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO anggota_v2 (email, nama, lat, lon, waktu, status_aktif)
-                VALUES (?, ?, COALESCE((SELECT lat FROM anggota_v2 WHERE email = ?), 0.0), COALESCE((SELECT lon FROM anggota_v2 WHERE email = ?), 0.0), COALESCE((SELECT waktu FROM anggota_v2 WHERE email = ?), 'Mencari Sinyal GPS...'), 1)
-            ''', (clean_email, clean_name, clean_email, clean_email, clean_email))
-            conn.commit()
+            # Cek apakah nama sudah dipakai orang lain
+            cursor.execute("SELECT nama FROM peserta WHERE nama = ?", (clean_name,))
+            existing = cursor.fetchone()
             
-            st.session_state.user_email = clean_email
-            st.session_state.user_name = clean_name
-            st.query_params["email"] = clean_email
-            st.rerun()
+            if existing:
+                st.sidebar.error("❌ Nama tersebut sudah dipakai peserta lain! Gunakan nama lain agar tidak kembar.")
+            else:
+                cursor.execute('''
+                    INSERT INTO peserta (nama, lat, lon, waktu, status_aktif)
+                    VALUES (?, 0.0, 0.0, 'Mencari Sinyal...', 1)
+                ''', (clean_name,))
+                conn.commit()
+                
+                st.session_state.user_name = clean_name
+                st.query_params["nama"] = clean_name
+                st.rerun()
         else:
-            st.sidebar.error("Email dan Nama Panggilan wajib diisi!")
-
-    st.info("👋 **Selamat datang!** Silakan *login* melalui sidebar untuk bergabung ke peta lokasi grup.")
-
-# JIKA SUDAH LOGIN
+            st.sidebar.error("Nama panggilan wajib diisi!")
 else:
-    st.sidebar.success(f"Login sebagai: **{st.session_state.user_name}**")
-    st.sidebar.caption(f"📧 {st.session_state.user_email}")
-    st.sidebar.caption("📡 GPS & Refresh Peta Serentak Aktif (30 Detik).")
+    st.sidebar.success(f"Status: Bergabung sebagai **{st.session_state.user_name}**")
     
-    # LOGOUT
-    if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
+    if st.sidebar.button("🚪 Keluar / Ganti Nama", type="secondary"):
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM anggota_v2 WHERE email = ?", (st.session_state.user_email,))
+        cursor.execute("DELETE FROM peserta WHERE nama = ?", (st.session_state.user_name,))
         conn.commit()
         
-        st.session_state.user_email = ""
         st.session_state.user_name = ""
         st.query_params.clear()
-        
-        st.components.v1.html("<script>localStorage.removeItem('lokasi_email'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
         st.rerun()
 
     # --- PANEL ADMIN (PIN: 123) ---
     st.sidebar.markdown("---")
     st.sidebar.subheader("🛠️ Panel Admin (PIN: 123)")
     
-    df_members = pd.read_sql("SELECT email, nama FROM anggota_v2 WHERE status_aktif = 1", conn)
-    member_dict = dict(zip(df_members['nama'], df_members['email'])) if not df_members.empty else {}
+    df_members = pd.read_sql("SELECT nama FROM peserta WHERE status_aktif = 1", conn)
+    member_list = df_members['nama'].tolist() if not df_members.empty else []
     
-    st.sidebar.write("👢 **Kick Anggota**")
-    selected_name = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + list(member_dict.keys()))
-    kick_pin = st.sidebar.text_input("Password Kick:", type="password", key="kick_pin_input")
+    kick_target = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + member_list)
+    admin_pin = st.sidebar.text_input("PIN Admin:", type="password")
     
-    if st.sidebar.button("🚫 Kick Anggota", type="secondary"):
-        if kick_pin == "123":
-            if selected_name != "-- Pilih --":
-                target_email = member_dict[selected_name]
+    if st.sidebar.button("🚫 Keluarkan Anggota"):
+        if admin_pin == "123":
+            if kick_target != "-- Pilih --":
                 cursor = conn.cursor()
-                cursor.execute("DELETE FROM anggota_v2 WHERE email = ?", (target_email,))
+                cursor.execute("DELETE FROM peserta WHERE nama = ?", (kick_target,))
                 conn.commit()
-                st.sidebar.success(f"Anggota '{selected_name}' berhasil dikeluarkan!")
+                st.sidebar.success(f"'{kick_target}' dikeluarkan dari rombongan.")
                 st.rerun()
             else:
-                st.sidebar.error("Pilih anggota yang ingin dikeluarkan!")
+                st.sidebar.error("Pilih anggota yang mau di-kick!")
         else:
-            st.sidebar.error("❌ Password salah! (PIN: 123)")
+            st.sidebar.error("❌ PIN Salah!")
 
-    st.sidebar.markdown("---")
-    st.sidebar.write("🗑️ **Reset Semua Anggota**")
-    pin_input = st.sidebar.text_input("Password Reset All:", type="password", key="pin_reset_input")
-    
-    if st.sidebar.button("🔥 Reset Semua", type="secondary"):
-        if pin_input == "123":
+    if st.sidebar.button("🔥 Reset Semua Data"):
+        if admin_pin == "123":
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM anggota_v2")
+            cursor.execute("DELETE FROM peserta")
             conn.commit()
-            
-            st.session_state.user_email = ""
             st.session_state.user_name = ""
             st.query_params.clear()
-            st.success("Semua data sesi berhasil di-reset!")
-            
-            st.components.v1.html("<script>localStorage.removeItem('lokasi_email'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
             st.rerun()
         else:
-            st.sidebar.error("❌ Password salah! (PIN: 123)")
+            st.sidebar.error("❌ PIN Salah!")
 
+    # --- DAFTAR ANGGOTA DI SIDEBAR ---
     st.sidebar.markdown("---")
-
-    # --- DAFTAR ANGGOTA AKTIF ---
-    st.sidebar.subheader("📋 Anggota Aktif di Grup")
-    df_sidebar = pd.read_sql("SELECT nama, email, lat, lon, waktu FROM anggota_v2 WHERE status_aktif = 1", conn)
+    st.sidebar.subheader("📋 Anggota Online")
+    df_sidebar = pd.read_sql("SELECT nama, lat, waktu FROM peserta", conn)
     if not df_sidebar.empty:
-        st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
         for idx, row in df_sidebar.iterrows():
-            status_kamu = " (Kamu)" if row['email'] == st.session_state.user_email else ""
-            st_gps_info = "🟢 GPS Terhubung" if (row['lat'] != 0.0 and row['lat'] is not None) else "🟡 Mencari Sinyal GPS..."
-            st.sidebar.markdown(
-                f"📍 **{row['nama']}**{status_kamu}<br>"
-                f"<small style='color:gray;'>Status: {st_gps_info}</small><br>"
-                f"<small style='color:gray;'>🕒 Update WIB: {row['waktu']}</small>", 
-                unsafe_allow_html=True
-            )
-            st.sidebar.markdown("---")
+            status_ T = "🟢 Terhubung" if row['lat'] != 0.0 else "🟡 Menunggu GPS..."
+            is_me = " (Kamu)" if row['nama'] == st.session_state.user_name else ""
+            st.sidebar.markdown(f"**{row['nama']}**{is_me}<br><small>{status_T} | {row['waktu']}</small>", unsafe_allow_html=True)
 
-    # --- SKRIP JAVASCRIPT: AUTO RECOVERY & REAL-TIME GPS SYNC ---
-    current_email = st.session_state.user_email
-    
+    # --- SKRIP JAVASCRIPT: AUTO SYNC GPS (SETIAP 30 DETIK) ---
+    current_user = st.session_state.user_name
     html_gps_script = f"""
-    <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Izin Share Live Terhubung:</b> Mengirim koordinat GPS & memperbarui jam WIB otomatis tiap 30 detik.
-    </div>
-
     <script>
-    const userEmail = "{current_email}";
+    const userName = "{current_user}";
     
-    if (userEmail && userEmail !== "") {{
-        localStorage.setItem("lokasi_email", userEmail);
-    }}
-
-    const savedEmail = localStorage.getItem("lokasi_email");
-    const currentUrlObj = new URL(window.parent.location.href);
-    if (savedEmail && !currentUrlObj.searchParams.has("email")) {{
-        currentUrlObj.searchParams.set("email", savedEmail);
-        window.parent.location.href = currentUrlObj.href;
-    }}
-
-    let wakeLock = null;
-    async function requestWakeLock() {{
-        try {{
-            if ('wakeLock' in navigator) {{
-                wakeLock = await navigator.wakeLock.request('screen');
-            }}
-        }} catch (err) {{
-            console.log("Wake Lock Error: " + err.message);
-        }}
-    }}
-    requestWakeLock();
-
-    function sendGPSData() {{
+    function sendGPS() {{
         if (navigator.geolocation) {{
             navigator.geolocation.getCurrentPosition(
-                function(position) {{
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    
+                function(pos) {{
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
                     const now = new Date();
-                    const hours = String(now.getHours()).padStart(2, '0');
-                    const minutes = String(now.getMinutes()).padStart(2, '0');
-                    const seconds = String(now.getSeconds()).padStart(2, '0');
-                    const timeWIB = hours + ":" + minutes + ":" + seconds;
+                    const timeWIB = String(now.getHours()).padStart(2, '0') + ":" + 
+                                    String(now.getMinutes()).padStart(2, '0') + ":" + 
+                                    String(now.getSeconds()).padStart(2, '0');
                     
-                    const currentUrl = new URL(window.parent.location.href);
-                    currentUrl.searchParams.set("email", userEmail);
-                    currentUrl.searchParams.set("lat", lat);
-                    currentUrl.searchParams.set("lon", lon);
-                    currentUrl.searchParams.set("time", timeWIB);
-                    
-                    window.parent.location.href = currentUrl.href;
+                    const url = new URL(window.parent.location.href);
+                    url.searchParams.set("nama", userName);
+                    url.searchParams.set("lat", lat);
+                    url.searchParams.set("lon", lon);
+                    url.searchParams.set("time", timeWIB);
+                    window.parent.location.href = url.href;
                 }},
-                function(error) {{
-                    console.log("GPS Error: " + error.message);
-                }},
-                {{ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }}
+                function(err) {{ console.log("GPS Error: " + err.message); }},
+                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
             );
         }}
     }}
-
-    setInterval(sendGPSData, 30000);
-
-    document.addEventListener("visibilitychange", function() {{
-        if (document.visibilityState === 'visible') {{
-            requestWakeLock();
-            sendGPSData();
-        }}
-    }});
+    setInterval(sendGPS, 30000);
     </script>
     """
-    st.components.v1.html(html_gps_script, height=50)
+    st.components.v1.html(html_gps_script, height=0)
 
-    # --- TAMPILAN PETA BERSAMA ---
-    st.subheader("🗺️ Peta Pantauan Anggota & SPBU Radius Max 30 KM")
+# --- TAMPILAN UTAMA PETA ---
+st.subheader("🗺️ Peta Lokasi Rombongan & Titik SPBU")
 
-    df_lokasi = pd.read_sql("SELECT * FROM anggota_v2 WHERE status_aktif = 1", conn)
-    df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
+df_lokasi = pd.read_sql("SELECT * FROM peserta WHERE status_aktif = 1", conn)
+df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0)]
 
-    if not df_valid.empty:
-        my_data = df_valid[df_valid['email'] == st.session_state.user_email]
+if not df_valid.empty:
+    my_data = df_valid[df_valid['nama'] == st.session_state.user_name]
+    center_lat = my_data.iloc[0]['lat'] if not my_data.empty else df_valid['lat'].mean()
+    center_lon = my_data.iloc[0]['lon'] if not my_data.empty else df_valid['lon'].mean()
+    
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+    
+    # Marker Anggota
+    for idx, row in df_valid.iterrows():
+        is_me = (row['nama'] == st.session_state.user_name)
+        color = 'red' if is_me else 'blue'
         
-        if not my_data.empty:
-            center_lat = my_data.iloc[0]['lat']
-            center_lon = my_data.iloc[0]['lon']
-        else:
-            center_lat = df_valid['lat'].mean()
-            center_lon = df_valid['lon'].mean()
+        popup_text = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br>Update: {row['waktu']} WIB"
+        folium.Marker(
+            [row['lat'], row['lon']],
+            popup=folium.Popup(popup_text, max_width=200),
+            tooltip=row['nama'],
+            icon=folium.Icon(color=color, icon='user' if is_me else 'map-marker', prefix='fa')
+        ).add_to(m)
         
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
-        
-        # 1. MARKER SELURUH ANGGOTA
-        for idx, row in df_valid.iterrows():
-            is_me = (row['email'] == st.session_state.user_email)
-            
-            warna_marker = 'red' if is_me else 'blue'
-            ikon_simbol = 'user' if is_me else 'map-marker'
-            
-            popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update WIB: {row['waktu']}</small><br><small>Lat: {row['lat']:.5f}, Lon: {row['lon']:.5f}</small>"
-            
+        folium.Circle([row['lat'], row['lon']], radius=80, color=color, fill=True, fill_opacity=0.2).add_to(m)
+
+    # Marker SPBU (Radius 30 KM)
+    spbu_list = fetch_nearby_spbu(center_lat, center_lon, radius_km=30)
+    for spbu in spbu_list:
+        dist = calculate_distance(center_lat, center_lon, spbu['lat'], spbu['lon'])
+        if dist <= 30.0:
+            color_spbu = 'yellow' if 'pertamina' in spbu['nama'].lower() else 'orange'
             folium.Marker(
-                [row['lat'], row['lon']], 
-                popup=folium.Popup(popup_html, max_width=220),
-                tooltip=f"{row['nama']} ({row['waktu']} WIB)",
-                icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
+                [spbu['lat'], spbu['lon']],
+                popup=f"⛽ <b>{spbu['nama']}</b><br>Jarak: ~{dist:.1f} km",
+                tooltip=spbu['nama'],
+                icon=folium.Icon(color=color_spbu, icon='gas-pump', prefix='fa')
             ).add_to(m)
 
-            folium.Circle(
-                location=[row['lat'], row['lon']],
-                radius=100,
-                color='red' if is_me else 'blue',
-                fill=True,
-                fill_opacity=0.2
-            ).add_to(m)
-
-        # 2. MARKER SPBU (RADIUS MAX 30 KM)
-        spbu_data = fetch_nearby_spbu(center_lat, center_lon, radius_km=30)
-        spbu_added = set()
-        
-        for spbu in spbu_data:
-            dist = calculate_distance(center_lat, center_lon, spbu['lat'], spbu['lon'])
-            
-            if dist <= 30.0:
-                spbu_key = (round(spbu['lat'], 4), round(spbu['lon'], 4))
-                if spbu_key not in spbu_added:
-                    spbu_added.add(spbu_key)
-                    
-                    nama_spbu_lower = spbu['nama'].lower()
-                    if 'pertamina' in nama_spbu_lower:
-                        warna_spbu = 'yellow'
-                    else:
-                        warna_spbu = 'orange'
-                    
-                    popup_spbu = f"⛽ <b>{spbu['nama']}</b><br><small>Jarak: ~{dist:.1f} km dari posisi kamu</small>"
-                    folium.Marker(
-                        [spbu['lat'], spbu['lon']],
-                        popup=folium.Popup(popup_spbu, max_width=220),
-                        tooltip=f"⛽ {spbu['nama']} ({dist:.1f} km)",
-                        icon=folium.Icon(color=warna_spbu, icon='gas-pump', prefix='fa')
-                    ).add_to(m)
-
-        st_folium(m, width=1100, height=520, key="live_map")
-
-    else:
-        st.warning("📡 **Sedang menyingkronkan lokasi presisi dari HP kamu...**")
-        st.info("Pastikan kamu mengeklik tombol **Allow / Izinkan Lokasi** pada pop-up izin browser HP.")
+    st_folium(m, width=1100, height=500, key="tour_map")
+else:
+    st.warning("📡 Menunggu sinyal GPS dari perangkat Anda. Pastikan izin lokasi (*Allow*) di browser sudah aktif.")
