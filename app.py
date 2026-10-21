@@ -32,11 +32,30 @@ if "nama_saya" not in st.session_state:
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
 
-# --- SIDEBAR: KONTROL SESI & TOMBOL KELUAR ---
+# --- 3. TANGKAP DATA GPS SILENT UPDATE DARI URL (BACKGROUND FETCH) ---
+# Mengambil data koordinat dari latar belakang secara ringan tanpa me-refresh halaman web
+query_params = st.query_params
+if "lat" in query_params and "lon" in query_params and "user" in query_params:
+    try:
+        u_name = query_params["user"]
+        u_lat = float(query_params["lat"])
+        u_lon = float(query_params["lon"])
+        waktu_sekarang = datetime.now().strftime("%H:%M:%S")
+        
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
+            VALUES (?, ?, ?, ?)
+        ''', (u_name, u_lat, u_lon, waktu_sekarang))
+        conn.commit()
+    except ValueError:
+        pass
+
+# --- SIDEBAR: KONTROL SESI & KELUAR SESI UNTUK SEMUA ---
 st.sidebar.header("⚙️ Sesi Turing")
 
 if not st.session_state.sedang_gabung:
-    # --- FORM KETIKA BELUM GABUNG ---
+    # --- FORM LOGIN / GABUNG GRUP ---
     st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
     input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
@@ -49,16 +68,13 @@ if not st.session_state.sedang_gabung:
             st.sidebar.error("Nama tidak boleh kosong!")
 
 else:
-    # --- MENU KETIKA SUDAH GABUNG (TOMBOL KELUAR PASTI MUNCUL) ---
+    # --- MENU KETIKA SUDAH GABUNG (ADA TOMBOL KELUAR EKSKLUSIF) ---
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
+    st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis setiap 1 menit secara hemat kuota).")
     
     st.sidebar.markdown("---")
-    st.sidebar.write("📌 **Kontrol Lokasi Anda:**")
-    st.sidebar.caption("Gunakan koordinat di bawah atau ambil dari GPS untuk memperbarui posisi Anda.")
-
-    st.sidebar.markdown("---")
     
-    # TOMBOL KELUAR SESI EKSKLUSIF
+    # TOMBOL KELUAR SESI
     if st.sidebar.button("🚪 Keluar Sesi", type="secondary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
@@ -71,7 +87,7 @@ else:
 
 st.sidebar.markdown("---")
 
-# --- 3. DAFTAR NAMA ANGGOTA AKTIF DI SIDEBAR ---
+# --- 4. DAFTAR NAMA ANGGOTA AKTIF DI SIDEBAR ---
 st.sidebar.subheader("📋 Anggota Aktif di Grup")
 df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
 if not df_sidebar.empty:
@@ -82,73 +98,57 @@ if not df_sidebar.empty:
 else:
     st.sidebar.info("Belum ada anggota yang bergabung.")
 
-# --- 4. KOMPONEN GPS & INPUT MANUAL (BEBAS ERROR F-STRING) ---
+# --- 5. SKRIP JAVASCRIPT SILENT GPS BACKGROUND (1 MENIT SEKALI, SUPER RINGAN) ---
 if st.session_state.sedang_gabung:
-    # Menggunakan string biasa (tanpa 'f' di depan) agar kurung kurawal JS aman dari SyntaxError
-    html_gps_capture = """
-    <div style="padding: 12px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; border-left: 4px solid #0288d1; margin-bottom: 15px;">
-        📡 <b>Status GPS:</b> <span id="gps_status">Klik tombol untuk deteksi posisi...</span>
-        <div style="margin-top: 8px;">
-            <button onclick="getLiveGPS()" style="background-color: #0288d1; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold;">
-                🔄 Ambil Posisi GPS HP Saya
-            </button>
-        </div>
+    current_user_name = st.session_state.nama_saya
+    
+    # Skrip ini berjalan senyap di background browser tanpa memuat ulang halaman atau membuat peta berkedip
+    html_silent_gps = f"""
+    <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
+        📡 <b>Background Tracker Aktif:</b> Mengirim update posisi setiap 1 menit secara senyap.
     </div>
 
     <script>
-    function getLiveGPS() {
-        const statusEl = document.getElementById('gps_status');
-        if (navigator.geolocation) {
-            statusEl.innerHTML = "Menghubungkan ke satelit GPS...";
+    const userName = "{current_user_name}";
+
+    function sendSilentGPS() {{
+        if (navigator.geolocation) {{
             navigator.geolocation.getCurrentPosition(
-                function(position) {
+                function(position) {{
                     const lat = position.coords.latitude;
                     const lon = position.coords.longitude;
-                    statusEl.innerHTML = "✅ Berhasil! Silakan masukkan angka Lat: " + lat.toFixed(5) + " dan Lon: " + lon.toFixed(5) + " ke kolom di bawah.";
-                },
-                function(error) {
-                    statusEl.innerHTML = "❌ Gagal mendeteksi GPS. Pastikan izin lokasi aktif.";
-                },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                    
+                    // Kirim data secara senyap lewat manipulasi URL History tanpa merusak tampilan
+                    const currentUrl = new URL(window.parent.location.href);
+                    currentUrl.searchParams.set("user", userName);
+                    currentUrl.searchParams.set("lat", lat);
+                    currentUrl.searchParams.set("lon", lon);
+                    window.parent.history.replaceState({{}}, '', currentUrl.href);
+                }},
+                function(error) {{
+                    console.log("GPS Error: " + error.message);
+                }},
+                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
             );
-        } else {
-            statusEl.innerHTML = "❌ Browser tidak mendukung GPS.";
-        }
-    }
+        }}
+    }}
+
+    // Eksekusi pertama kali, lalu ulangi otomatis setiap 60 detik (1 menit)
+    sendSilentGPS();
+    setInterval(sendSilentGPS, 60000);
     </script>
     """
-    st.components.v1.html(html_gps_capture, height=110)
-
-    # Input koordinat untuk disimpan ke database secara stabil tanpa kedip
-    st.write("### Masukkan Titik Koordinat Anda ke Peta")
-    col_lat, col_lon, col_kirim = st.columns([2, 2, 1])
-    with col_lat:
-        input_lat = st.number_input("Latitude", value=-6.2088, format="%.6f", key="inp_lat")
-    with col_lon:
-        input_lon = st.number_input("Longitude", value=106.8456, format="%.6f", key="inp_lon")
-    with col_kirim:
-        st.write("")
-        st.write("")
-        if st.button("💾 Simpan / Update Posisi", type="primary"):
-            waktu_sekarang = datetime.now().strftime("%H:%M:%S")
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
-                VALUES (?, ?, ?, ?)
-            ''', (st.session_state.nama_saya, input_lat, input_lon, waktu_sekarang))
-            conn.commit()
-            st.success("Posisi berhasil diperbarui!")
-            st.rerun()
+    st.components.v1.html(html_silent_gps, height=50)
 
 st.markdown("---")
 
-# --- 5. TAMPILAN PETA BERSAMA (STABIL 1 LAYAR) ---
+# --- 6. TAMPILAN PETA BERSAMA (STABIL 1 LAYAR) ---
 col_tittle, col_btn = st.columns([3, 1])
 with col_tittle:
     st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
 with col_btn:
     st.write("")
-    if st.button("🔄 Refresh Peta"):
+    if st.button("🔄 Refresh Peta Manual"):
         st.rerun()
 
 df_turing = pd.read_sql("SELECT * FROM anggota", conn)
@@ -164,7 +164,7 @@ if not df_turing.empty:
     m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
     
     for idx, row in df_turing.iterrows():
-        if row['lat'] == 0.0 and row['lon'] == 0.0:
+        if row['lat'] is None or row['lon'] is None or (row['lat'] == 0.0 and row['lon'] == 0.0):
             continue
             
         is_me = (st.session_state.sedang_gabung and row['nama'].lower() == st.session_state.nama_saya.lower())
@@ -189,7 +189,7 @@ if not df_turing.empty:
             fill_opacity=0.15
         ).add_to(m)
 
-    # Render peta stabil tanpa kedip
+    # Render peta secara stabil
     st_folium(m, width=1100, height=520)
 
 else:
