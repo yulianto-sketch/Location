@@ -31,7 +31,20 @@ if "nama_saya" not in st.session_state:
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
 
-# --- 3. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
+# --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-RESET ADMIN) ---
+if st.session_state.sedang_gabung:
+    cursor = conn.cursor()
+    cursor.execute("SELECT nama FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
+    user_exists = cursor.fetchone()
+    
+    # Jika nama tidak ditemukan di DB (karena di-reset/dihapus), paksa logout di HP ini
+    if not user_exists:
+        st.session_state.sedang_gabung = False
+        st.session_state.nama_saya = ""
+        st.sidebar.warning("⚠️ Sesi turing telah di-reset oleh admin. Anda otomatis dikeluarkan.")
+        st.rerun()
+
+# --- 4. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
 query_params = st.query_params
 if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
     try:
@@ -40,12 +53,14 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
         u_lon = float(query_params["lon"])
         waktu_sekarang = query_params["time"]
         
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
-            VALUES (?, ?, ?, ?)
-        ''', (u_name, u_lat, u_lon, waktu_sekarang))
-        conn.commit()
+        # Hanya update jika user tersebut masih terdaftar di sesi (mencegah auto-rejoin setelah reset)
+        if st.session_state.sedang_gabung and u_name == st.session_state.nama_saya:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
+                VALUES (?, ?, ?, ?)
+            ''', (u_name, u_lat, u_lon, waktu_sekarang))
+            conn.commit()
     except ValueError:
         pass
 
@@ -61,6 +76,15 @@ if not st.session_state.sedang_gabung:
         if input_nama.strip() != "":
             st.session_state.nama_saya = input_nama.strip()
             st.session_state.sedang_gabung = True
+            
+            # Daftarkan nama pertama kali ke DB
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
+                VALUES (?, ?, ?, ?)
+            ''', (st.session_state.nama_saya, 0.0, 0.0, "Baru Bergabung"))
+            conn.commit()
+            
             st.rerun()
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
@@ -74,7 +98,7 @@ else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
     st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit).")
     
-    # TOMBOL LOGOUT
+    # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
