@@ -8,7 +8,7 @@ import sqlite3
 st.set_page_config(page_title="Peta Turing Privat", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup Turing")
 
-# --- 1. DATABASE SQLITE & INISIALISASI TABEL (HARUS PALING ATAS) ---
+# --- 1. DATABASE SQLITE & INISIALISASI TABEL ---
 def init_db():
     conn = sqlite3.connect('turing_lokasi.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -80,10 +80,11 @@ if st.session_state.nama_saya == "":
                 st.sidebar.error("❌ Nama tersebut sudah digunakan oleh peserta lain. Gunakan nama panggilan lain.")
             else:
                 st.session_state.nama_saya = clean_name
+                # Memasukkan 5 nilai untuk 5 kolom (nama, lat, lon, waktu, status_aktif)
                 cursor.execute('''
                     INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu, status_aktif)
-                    VALUES (?, ?, ?, ?, 1)
-                ''', (clean_name, -6.2088, 106.8456, "Baru Bergabung"))
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (clean_name, -6.2088, 106.8456, "Baru Bergabung", 1))
                 conn.commit()
                 st.rerun()
         else:
