@@ -33,7 +33,7 @@ conn = init_db()
 
 # --- FUNGSI HITUNG JARAK (HAVERSINE FORMULA) ---
 def calculate_distance(lat1, lon1, lat2, lon2):
-    R = 6371.0 # Radius bumi dalam Kilometer
+    R = 6371.0 # Radius bumi dalam KM
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat / 2) ** 2 + 
@@ -42,8 +42,7 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --- DATABASE / DAFTAR SPBU BESAR KUNCI (CONTOH TITIK UTAMA BANTEN/JABODETABEK/JABAR) ---
-# Bisa ditambahkan koordinat SPBU Rest Area / Jalur Utama lainnya
+# --- DATABASE / DAFTAR SPBU BESAR ---
 SPBU_LIST = [
     {"nama": "SPBU Pertamina Pasti Pas Rajeg", "lat": -6.1558, "lon": 106.5083},
     {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
@@ -136,7 +135,7 @@ if st.session_state.nama_saya == "":
 # JIKA SUDAH LOGIN
 else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 Pelacak GPS Real-Time Aktif (Update tiap 30 detik).")
+    st.sidebar.caption("📡 Sync GPS Serentak Aktif (Update & Auto Refresh tiap 30 detik).")
     
     # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
@@ -147,7 +146,6 @@ else:
         st.session_state.nama_saya = ""
         st.query_params.clear()
         
-        # Hapus localStorage saat logout
         st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
         st.rerun()
 
@@ -166,7 +164,6 @@ else:
             st.query_params.clear()
             st.success("Semua data sesi berhasil di-reset untuk semua orang!")
             
-            # Hapus localStorage saat reset
             st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
             st.rerun()
         else:
@@ -185,30 +182,28 @@ else:
             st.sidebar.markdown(
                 f"📍 **{row['nama']}**{status_kamu}<br>"
                 f"<small style='color:gray;'>Status: {st_gps_info}</small><br>"
-                f"<small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", 
+                f"<small style='color:gray;'>🕒 Update WIB: {row['waktu']}</small>", 
                 unsafe_allow_html=True
             )
             st.sidebar.markdown("---")
     else:
         st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-    # --- SKRIP JAVASCRIPT LOCALSTORAGE (AUTO RECOVERY SESI & REAL-TIME GPS 30s) ---
+    # --- SKRIP JAVASCRIPT: SYNC SINKRONISASI SERENTAK TIAP DETIK 00 & 30 ---
     current_user_name = st.session_state.nama_saya
     
-    html_realtime_gps = f"""
+    html_synchronized_gps = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Background Tracker & Auto-Login Aktif:</b> Mengirim posisi tiap 30s & menyimpan sesi di memori browser.
+        📡 <b>Sync GPS Serentak & Auto-Refresh:</b> Mengirim koordinat WIB bersamaan di detik :00 & :30 dan merefresh peta secara otomatis.
     </div>
 
     <script>
     const userName = "{current_user_name}";
     
-    // Simpan nama ke localStorage agar saat refresh/buka tab posisi tetap terdaftar
     if (userName && userName !== "") {{
         localStorage.setItem("lokasi_user", userName);
     }}
 
-    // Auto recovery dari localStorage jika URL tereset
     const savedUser = localStorage.getItem("lokasi_user");
     const currentUrlObj = new URL(window.parent.location.href);
     if (savedUser && !currentUrlObj.searchParams.has("user")) {{
@@ -216,7 +211,7 @@ else:
         window.parent.location.href = currentUrlObj.href;
     }}
 
-    function sendRealtimeGPS() {{
+    function sendSynchronizedGPS() {{
         if (navigator.geolocation) {{
             navigator.geolocation.getCurrentPosition(
                 function(position) {{
@@ -230,18 +225,13 @@ else:
                     const timeWIB = hours + ":" + minutes + ":" + seconds;
                     
                     const currentUrl = new URL(window.parent.location.href);
-                    const prevLat = currentUrl.searchParams.get("lat");
-                    
                     currentUrl.searchParams.set("user", userName);
                     currentUrl.searchParams.set("lat", lat);
                     currentUrl.searchParams.set("lon", lon);
                     currentUrl.searchParams.set("time", timeWIB);
                     
-                    window.parent.history.replaceState({{}}, '', currentUrl.href);
-
-                    if (!prevLat || prevLat === "0" || prevLat === "0.0") {{
-                        window.parent.location.reload();
-                    }}
+                    // Lakukan pencatatan parameter & trigger reload halaman agar peta langsung ter-update otomatis bersamaan
+                    window.parent.location.href = currentUrl.href;
                 }},
                 function(error) {{
                     console.log("GPS Error: " + error.message);
@@ -251,31 +241,36 @@ else:
         }}
     }}
 
-    sendRealtimeGPS();
-    setInterval(sendRealtimeGPS, 30000);
+    // Menghitung jeda milidetik menuju detik ke-00 atau detik ke-30 berikutnya (Sinkronisasi Serentak Semua HP)
+    function scheduleNextSync() {{
+        const now = new Date();
+        const currentSeconds = now.getSeconds();
+        const currentMillis = now.getMilliseconds();
+        
+        let secondsToWait = 30 - (currentSeconds % 30);
+        let timeToNextSync = (secondsToWait * 1000) - currentMillis;
+
+        setTimeout(function() {{
+            sendSynchronizedGPS();
+        }}, timeToNextSync);
+    }}
+
+    scheduleNextSync();
     </script>
     """
-    st.components.v1.html(html_realtime_gps, height=50)
+    st.components.v1.html(html_synchronized_gps, height=50)
 
     # --- TAMPILAN PETA BERSAMA ---
-    col_tittle, col_btn = st.columns([3, 1])
-    with col_tittle:
-        st.subheader("🗺️ Peta Pantauan Anggota & SPBU Besar (Radius 50 KM)")
-    with col_btn:
-        st.write("")
-        if st.button("🔄 Refresh Peta Manual"):
-            st.rerun()
+    st.subheader("🗺️ Peta Pantauan Anggota & SPBU Besar (Auto Refresh 30s)")
 
     df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
-
-    # Filter data lokasi anggota yang valid
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
         center_lat = df_valid['lat'].mean()
         center_lon = df_valid['lon'].mean()
         
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
         
         # 1. MARKER ANGGOTA
         for idx, row in df_valid.iterrows():
@@ -289,7 +284,7 @@ else:
             folium.Marker(
                 [row['lat'], row['lon']], 
                 popup=folium.Popup(popup_html, max_width=220),
-                tooltip=f"{row['nama']} (Akurat)",
+                tooltip=f"{row['nama']} ({row['waktu']} WIB)",
                 icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
             ).add_to(m)
 
@@ -301,15 +296,13 @@ else:
                 fill_opacity=0.2
             ).add_to(m)
 
-        # 2. MARKER SPBU BESAR DALAM RADIUS 50 KM DARI MASING-MASING ANGGOTA
+        # 2. MARKER SPBU BESAR (RADIUS 50 KM)
         spbu_added = set()
         for _, member in df_valid.iterrows():
             m_lat, m_lon = member['lat'], member['lon']
             
             for spbu in SPBU_LIST:
                 dist = calculate_distance(m_lat, m_lon, spbu['lat'], spbu['lon'])
-                
-                # Filter radius 50 km dari lokasi anggota
                 if dist <= 50.0:
                     spbu_key = (spbu['lat'], spbu['lon'])
                     if spbu_key not in spbu_added:
@@ -323,8 +316,8 @@ else:
                             icon=folium.Icon(color='orange', icon='gas-pump', prefix='fa')
                         ).add_to(m)
 
-        st_folium(m, width=1100, height=520)
+        st_folium(m, width=1100, height=520, key="live_map")
 
     else:
-        st.warning("📡 **Sedang mengambil lokasi presisi dari HP kamu...**")
-        st.info("Pastikan kamu mengeklik tombol **Allow / Izinkan Lokasi** pada pop-up izin browser HP. Jika peta belum muncul, klik tombol **Refresh Peta Manual** di kanan atas.")
+        st.warning("📡 **Sedang menyingkronkan lokasi presisi dari HP kamu...**")
+        st.info("Pastikan kamu mengeklik tombol **Allow / Izinkan Lokasi** pada pop-up izin browser HP.")
