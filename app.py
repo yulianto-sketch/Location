@@ -4,6 +4,7 @@ import folium
 from streamlit_folium import st_folium
 import sqlite3
 import math
+import requests
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="Peta Lokasi Privat", layout="wide")
@@ -42,17 +43,46 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --- DATABASE / DAFTAR SPBU BESAR ---
-SPBU_LIST = [
-    {"nama": "SPBU Pertamina Pasti Pas Rajeg", "lat": -6.1558, "lon": 106.5083},
-    {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
-    {"nama": "SPBU Rest Area KM 13.5 Tol Jakarta-Tangerang", "lat": -6.2162, "lon": 106.6912},
-    {"nama": "SPBU Rest Area KM 43 Tol Tangerang-Merak", "lat": -6.2575, "lon": 106.3980},
-    {"nama": "SPBU Rest Area KM 68 Tol Tangerang-Merak", "lat": -6.1384, "lon": 106.1925},
-    {"nama": "SPBU Pertamina Bandara Soekarno-Hatta", "lat": -6.1265, "lon": 106.6548},
-    {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
-    {"nama": "SPBU Pertamina Puncak Bogor", "lat": -6.6983, "lon": 106.9231},
-]
+# --- FUNGSI AMBIL SPBU REAL-TIME VIA OVERPASS API (OPENSTREETMAP) ---
+@st.cache_data(ttl=600) # Cache selama 10 menit agar hemat bandwidth
+def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
+    radius_meters = int(radius_km * 1000)
+    overpass_url = "http://overpass-api.de/api/interpreter"
+    query = f"""
+    [out:json];
+    (
+      node["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
+      way["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
+    );
+    out center 50;
+    """
+    try:
+        resp = requests.post(overpass_url, data={'data': query}, timeout=10)
+        data = resp.json()
+        spbu_list = []
+        for element in data.get('elements', []):
+            lat = element.get('lat') or element.get('center', {}).get('lat')
+            lon = element.get('lon') or element.get('center', {}).get('lon')
+            tags = element.get('tags', {})
+            brand = tags.get('brand', tags.get('name', 'SPBU / Pom Bensin'))
+            
+            if lat and lon:
+                spbu_list.append({
+                    "nama": brand,
+                    "lat": lat,
+                    "lon": lon
+                })
+        return spbu_list
+    except Exception:
+        # Fallback SPBU Utama Banten / Tangerang / Jabodetabek jika API timeout
+        return [
+            {"nama": "SPBU Pertamina Rajeg", "lat": -6.1558, "lon": 106.5083},
+            {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
+            {"nama": "SPBU Rest Area KM 13.5 Tangerang", "lat": -6.2162, "lon": 106.6912},
+            {"nama": "SPBU Rest Area KM 43 Banten", "lat": -6.2575, "lon": 106.3980},
+            {"nama": "SPBU Rest Area KM 68 Serang", "lat": -6.1384, "lon": 106.1925},
+            {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
+        ]
 
 # --- 2. BACA URL PARAMETER UNTUK AUTO-LOGIN BUKA TAB BARU ---
 query_params = st.query_params
@@ -135,7 +165,7 @@ if st.session_state.nama_saya == "":
 # JIKA SUDAH LOGIN
 else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 Sync GPS Serentak Aktif (Update & Auto Refresh tiap 30 detik).")
+    st.sidebar.caption("📡 Sync GPS & Refresh Peta Serentak Aktif (tiap 30 detik).")
     
     # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
@@ -171,7 +201,7 @@ else:
 
     st.sidebar.markdown("---")
 
-    # --- DAFTAR ANGGOTA AKTIF ---
+    # --- DAFTAR ANGGOTA AKTIF & TERUPDATE SERENTAK ---
     st.sidebar.subheader("📋 Anggota Aktif di Grup")
     df_sidebar = pd.read_sql("SELECT nama, lat, lon, waktu FROM anggota WHERE status_aktif = 1", conn)
     if not df_sidebar.empty:
@@ -189,12 +219,12 @@ else:
     else:
         st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-    # --- SKRIP JAVASCRIPT: SYNC SINKRONISASI SERENTAK TIAP DETIK 00 & 30 ---
+    # --- SKRIP JAVASCRIPT: UPDATE GPS & AUTO-RELOAD HARIAN SETIAP 30 DETIK ---
     current_user_name = st.session_state.nama_saya
     
     html_synchronized_gps = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Sync GPS Serentak & Auto-Refresh:</b> Mengirim koordinat WIB bersamaan di detik :00 & :30 dan merefresh peta secara otomatis.
+        📡 <b>Sync GPS Serentak:</b> Mengirim koordinat & memperbarui WIB secara otomatis tiap 30 detik.
     </div>
 
     <script>
@@ -230,7 +260,7 @@ else:
                     currentUrl.searchParams.set("lon", lon);
                     currentUrl.searchParams.set("time", timeWIB);
                     
-                    // Lakukan pencatatan parameter & trigger reload halaman agar peta langsung ter-update otomatis bersamaan
+                    // Reload halaman utama agar waktu WIB & posisi di sidebar/peta ter-update serentak
                     window.parent.location.href = currentUrl.href;
                 }},
                 function(error) {{
@@ -241,45 +271,39 @@ else:
         }}
     }}
 
-    // Menghitung jeda milidetik menuju detik ke-00 atau detik ke-30 berikutnya (Sinkronisasi Serentak Semua HP)
-    function scheduleNextSync() {{
-        const now = new Date();
-        const currentSeconds = now.getSeconds();
-        const currentMillis = now.getMilliseconds();
-        
-        let secondsToWait = 30 - (currentSeconds % 30);
-        let timeToNextSync = (secondsToWait * 1000) - currentMillis;
-
-        setTimeout(function() {{
-            sendSynchronizedGPS();
-        }}, timeToNextSync);
-    }}
-
-    scheduleNextSync();
+    // Auto-sync setiap 30 detik (30000 ms)
+    setInterval(sendSynchronizedGPS, 30000);
     </script>
     """
     st.components.v1.html(html_synchronized_gps, height=50)
 
     # --- TAMPILAN PETA BERSAMA ---
-    st.subheader("🗺️ Peta Pantauan Anggota & SPBU Besar (Auto Refresh 30s)")
+    st.subheader("🗺️ Peta Pantauan Anggota & SPBU Besar (Radius Max 50 KM)")
 
     df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
-        center_lat = df_valid['lat'].mean()
-        center_lon = df_valid['lon'].mean()
+        # Peta berpusat di lokasi pengguna yang sedang login
+        my_data = df_valid[df_valid['nama'].str.lower() == st.session_state.nama_saya.lower()]
         
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
+        if not my_data.empty:
+            center_lat = my_data.iloc[0]['lat']
+            center_lon = my_data.iloc[0]['lon']
+        else:
+            center_lat = df_valid['lat'].mean()
+            center_lon = df_valid['lon'].mean()
         
-        # 1. MARKER ANGGOTA
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
+        
+        # 1. MARKER SELURUH ANGGOTA
         for idx, row in df_valid.iterrows():
             is_me = (row['nama'].lower() == st.session_state.nama_saya.lower())
             
             warna_marker = 'red' if is_me else 'blue'
             ikon_simbol = 'user' if is_me else 'map-marker'
             
-            popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small><br><small>Lat: {row['lat']:.5f}, Lon: {row['lon']:.5f}</small>"
+            popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update WIB: {row['waktu']}</small><br><small>Lat: {row['lat']:.5f}, Lon: {row['lon']:.5f}</small>"
             
             folium.Marker(
                 [row['lat'], row['lon']], 
@@ -296,25 +320,26 @@ else:
                 fill_opacity=0.2
             ).add_to(m)
 
-        # 2. MARKER SPBU BESAR (RADIUS 50 KM)
+        # 2. MARKER SPBU BESAR DI RADIUS MAX 50 KM
+        spbu_data = fetch_nearby_spbu(center_lat, center_lon, radius_km=50)
         spbu_added = set()
-        for _, member in df_valid.iterrows():
-            m_lat, m_lon = member['lat'], member['lon']
+        
+        for spbu in spbu_data:
+            dist = calculate_distance(center_lat, center_lon, spbu['lat'], spbu['lon'])
             
-            for spbu in SPBU_LIST:
-                dist = calculate_distance(m_lat, m_lon, spbu['lat'], spbu['lon'])
-                if dist <= 50.0:
-                    spbu_key = (spbu['lat'], spbu['lon'])
-                    if spbu_key not in spbu_added:
-                        spbu_added.add(spbu_key)
-                        
-                        popup_spbu = f"⛽ <b>{spbu['nama']}</b><br><small>Jarak: ~{dist:.1f} km dari {member['nama']}</small>"
-                        folium.Marker(
-                            [spbu['lat'], spbu['lon']],
-                            popup=folium.Popup(popup_spbu, max_width=220),
-                            tooltip=f"⛽ {spbu['nama']} ({dist:.1f} km)",
-                            icon=folium.Icon(color='orange', icon='gas-pump', prefix='fa')
-                        ).add_to(m)
+            # Filter ketat maksimal 50 KM dari titik user login
+            if dist <= 50.0:
+                spbu_key = (round(spbu['lat'], 4), round(spbu['lon'], 4))
+                if spbu_key not in spbu_added:
+                    spbu_added.add(spbu_key)
+                    
+                    popup_spbu = f"⛽ <b>{spbu['nama']}</b><br><small>Jarak: ~{dist:.1f} km dari posisi kamu</small>"
+                    folium.Marker(
+                        [spbu['lat'], spbu['lon']],
+                        popup=folium.Popup(popup_spbu, max_width=220),
+                        tooltip=f"⛽ {spbu['nama']} ({dist:.1f} km)",
+                        icon=folium.Icon(color='orange', icon='gas-pump', prefix='fa')
+                    ).add_to(m)
 
         st_folium(m, width=1100, height=520, key="live_map")
 
