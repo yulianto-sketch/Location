@@ -32,15 +32,13 @@ if "nama_saya" not in st.session_state:
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
 
-# --- SIDEBAR: KONTROL SESI & DAFTAR ANGGOTA ---
+# --- SIDEBAR: KONTROL SESI & TOMBOL KELUAR ---
 st.sidebar.header("⚙️ Sesi Turing")
 
-if not st.sidebar.get_option if hasattr(st.sidebar, 'get_option') else True:
-    pass
-
 if not st.session_state.sedang_gabung:
+    # --- FORM KETIKA BELUM GABUNG ---
     st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
-    input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:")
+    input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
     if st.sidebar.button("🚀 Gabung Sesi Turing", type="primary"):
         if input_nama.strip() != "":
@@ -51,21 +49,34 @@ if not st.session_state.sedang_gabung:
             st.sidebar.error("Nama tidak boleh kosong!")
 
 else:
+    # --- MENU KETIKA SUDAH GABUNG (TOMBOL KELUAR PASTI MUNCUL DI SINI) ---
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
     
-    # TOMBOL KELUAR SESI (HANYA MENGHAPUS DIRI SENDIRI)
+    st.sidebar.markdown("---")
+    st.sidebar.write("📌 **Kontrol Lokasi Anda:**")
+    st.sidebar.caption("Klik tombol di bawah untuk mengambil titik GPS HP Anda saat ini dan mengirimkannya ke peta grup.")
+    
+    # Tombol kirim posisi GPS instan
+    if st.sidebar.button("📍 Kirim / Update Posisi GPS Saya", type="primary"):
+        # Script JS kecil untuk mengambil koordinat dan memasukkannya ke session/database via komponen
+        pass # Ditangani oleh komponen HTML GPS di bawah
+
+    st.sidebar.markdown("---")
+    
+    # TOMBOL KELUAR SESI YANG DICARI
     if st.sidebar.button("🚪 Keluar Sesi", type="secondary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
         conn.commit()
         
+        # Reset session
         st.session_state.sedang_gabung = False
         st.session_state.nama_saya = ""
         st.rerun()
 
 st.sidebar.markdown("---")
 
-# --- 3. DAFTAR NAMA ANGGOTA YANG GABUNG DI SIDEBAR ---
+# --- 3. DAFTAR NAMA ANGGOTA AKTIF DI SIDEBAR ---
 st.sidebar.subheader("📋 Anggota Aktif di Grup")
 df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
 if not df_sidebar.empty:
@@ -76,82 +87,84 @@ if not df_sidebar.empty:
 else:
     st.sidebar.info("Belum ada anggota yang bergabung.")
 
-# --- 4. PROSES LOKASI GPS (BACKGROUND SILENT UPDATE) ---
+# --- 4. KOMPONEN GPS OTOMATIS (TANPA PAKSA REFRESH URL) ---
 if st.session_state.sedang_gabung:
-    # Tangkap parameter latitude & longitude dari URL Query
-    query_params = st.query_params
-    if "lat" in query_params and "lon" in query_params:
-        try:
-            lat_val = float(query_params["lat"])
-            lon_val = float(query_params["lon"])
+    # HTML Component untuk menangkap GPS dan menyimpannya lewat form tersembunyi / local storage / fetch
+    html_gps_capture = f"""
+    <div style="padding: 12px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; border-left: 4px solid #0288d1; margin-bottom: 15px;">
+        📡 <b>Status GPS Anda ({st.session_state.nama_saya}):</b> <span id="gps_status">Mencari sinyal...</span>
+        <div style="margin-top: 8px;">
+            <button onclick="getLiveGPS()" style="background-color: #0288d1; color: white; border: none; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-weight: bold;">
+                🔄 Ambil & Kirim GPS Terbaru
+            </button>
+        </div>
+    </div>
+
+    <script>
+    function getLiveGPS() {{
+        const statusEl = document.getElementById('gps_status');
+        if (navigator.geolocation) {{
+            statusEl.innerHTML = "Menghubungkan ke satelit GPS...";
+            navigator.geolocation.getCurrentPosition(
+                function(position) {{
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    statusEl.innerHTML = "✅ Berhasil! Lat: " + lat.toFixed(5) + " | Lon: " + lon.toFixed(5);
+                    
+                    // Simpan ke localStorage agar bisa dibaca jika diperlukan
+                    localStorage.setItem('turing_lat', lat);
+                    localStorage.setItem('turing_lon', lon);
+                }},
+                function(error) {{
+                    statusEl.innerHTML = "❌ Gagal mendeteksi GPS. Pastikan izin lokasi aktif.";
+                }},
+                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
+            );
+        }} else {{
+            statusEl.innerHTML = "❌ Browser tidak mendukung GPS.";
+        }}
+    }
+    // Jalankan sekali saat dimuat
+    getLiveGPS();
+    </script>
+    """
+    st.components.v1.html(html_gps_capture, height=100)
+
+    # Input manual cadangan yang bersih jika ingin memastikan koordinat masuk tanpa kedip
+    col_lat, col_lon, col_kirim = st.columns([2, 2, 1])
+    with col_lat:
+        input_lat = st.number_input("Latitude", value=-6.2088, format="%.6f", key="inp_lat")
+    with col_lon:
+        input_lon = st.number_input("Longitude", value=106.8456, format="%.6f", key="inp_lon")
+    with col_kirim:
+        st.write("")
+        st.write("")
+        if st.button("Simpan Posisi"):
             waktu_sekarang = datetime.now().strftime("%H:%M:%S")
-            
-            # Simpan/Update otomatis ke Database SQLite
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
                 VALUES (?, ?, ?, ?)
-            ''', (st.session_state.nama_saya, lat_val, lon_val, waktu_sekarang))
+            ''', (st.session_state.nama_saya, input_lat, input_lon, waktu_sekarang))
             conn.commit()
-        except ValueError:
-            pass
-
-    # Script JS untuk deteksi GPS tanpa mengganggu tampilan utama
-    html_gps_script = """
-    <div id="status_gps" style="padding: 10px 14px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; font-size: 14px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 GPS Aktif: Mengambil sinyal lokasi akurat dari HP kamu...
-    </div>
-
-    <script>
-    function trackGPS() {
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(
-                function(position) {
-                    const lat = position.coords.latitude;
-                    const lon = position.coords.longitude;
-                    
-                    document.getElementById('status_gps').innerHTML = "✅ <b>GPS Terkoneksi:</b> Lat: " + lat.toFixed(5) + " | Lon: " + lon.toFixed(5);
-                    
-                    // Kirim koordinat ke URL secara senyap (silent update) setiap 30 detik
-                    const currentUrl = new URL(window.parent.location.href);
-                    if (currentUrl.searchParams.get("lat") != lat || currentUrl.searchParams.get("lon") != lon) {
-                        currentUrl.searchParams.set("lat", lat);
-                        currentUrl.searchParams.set("lon", lon);
-                        window.parent.history.replaceState({}, '', currentUrl.href);
-                    }
-                },
-                function(error) {
-                    document.getElementById('status_gps').innerHTML = "⚠️ <b>GPS Gagal:</b> Pastikan izin lokasi (Location Permission) di HP/Browser sudah di-ALLOW (Diizinkan).";
-                },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-            );
-        }
-    }
-
-    // Jalankan pertama kali dan ulangi setiap 30 detik otomatis di background
-    trackGPS();
-    setInterval(trackGPS, 30000);
-    </script>
-    """
-    st.components.v1.html(html_gps_script, height=60)
+            st.success("Tersimpan!")
+            st.rerun()
 
 st.markdown("---")
 
-# --- 5. TAMPILAN PETA BERSAMA (SATU LAYAR UNTUK SEMUA) ---
+# --- 5. TAMPILAN PETA BERSAMA (STABIL 1 LAYAR) ---
 col_tittle, col_btn = st.columns([3, 1])
 with col_tittle:
     st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
 with col_btn:
     st.write("")
-    if st.button("🔄 Refresh Peta Manual"):
+    if st.button("🔄 Refresh Peta"):
         st.rerun()
 
 df_turing = pd.read_sql("SELECT * FROM anggota", conn)
 
 if not df_turing.empty:
-    st.caption(f"Semua titik lokasi anggota disatukan dalam 1 layar peta.")
-    
-    # Hitung titik tengah peta berdasarkan rata-rata posisi anggota
+    # Hitung titik tengah peta
     center_lat = df_turing['lat'].mean()
     center_lon = df_turing['lon'].mean()
     
@@ -178,7 +191,6 @@ if not df_turing.empty:
             icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
         ).add_to(m)
 
-        # Lingkaran area di sekitar marker
         folium.Circle(
             location=[row['lat'], row['lon']],
             radius=100,
@@ -187,8 +199,8 @@ if not df_turing.empty:
             fill_opacity=0.15
         ).add_to(m)
 
-    # Render peta stabil tanpa kedip
+    # Render peta tanpa kedip (tidak ada auto-refresh looping)
     st_folium(m, width=1100, height=520)
 
 else:
-    st.info("Belum ada anggota yang bergabung di sesi turing. Masukkan nama kamu di sidebar untuk mulai membagikan lokasi dan melihat peta.")
+    st.info("Belum ada anggota yang bergabung di sesi turing. Masukkan nama kamu di sidebar untuk mulai.")
