@@ -42,7 +42,6 @@ if st.session_state.nama_saya == "" and "user" in query_params:
     cursor = conn.cursor()
     cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (user_from_url,))
     valid_user = cursor.fetchone()
-    
     if valid_user:
         st.session_state.nama_saya = valid_user[0]
 
@@ -52,11 +51,10 @@ if st.session_state.nama_saya != "":
     cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (st.session_state.nama_saya,))
     active_user = cursor.fetchone()
     if not active_user:
-        # Jika sudah di-reset admin, bersihkan session dan hapus parameter URL
         st.session_state.nama_saya = ""
         st.query_params.clear()
 
-# --- 4. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
+# --- 4. TANGKAP DATA GPS REAL-TIME DARI PARAMETER URL ---
 if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
     try:
         u_name = query_params["user"]
@@ -64,15 +62,16 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
         u_lon = float(query_params["lon"])
         waktu_sekarang = query_params["time"]
         
-        cursor = conn.cursor()
-        cursor.execute("SELECT status_aktif FROM anggota WHERE nama = ?", (u_name,))
-        res = cursor.fetchone()
-        
-        if res and res[0] == 1:
-            cursor.execute('''
-                UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE nama = ?
-            ''', (u_lat, u_lon, waktu_sekarang, u_name))
-            conn.commit()
+        if u_lat != 0.0 and u_lon != 0.0:
+            cursor = conn.cursor()
+            cursor.execute("SELECT status_aktif FROM anggota WHERE nama = ?", (u_name,))
+            res = cursor.fetchone()
+            
+            if res and res[0] == 1:
+                cursor.execute('''
+                    UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE nama = ?
+                ''', (u_lat, u_lon, waktu_sekarang, u_name))
+                conn.commit()
     except ValueError:
         pass
 
@@ -99,10 +98,9 @@ if st.session_state.nama_saya == "":
                 cursor.execute('''
                     INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu, status_aktif)
                     VALUES (?, ?, ?, ?, ?)
-                ''', (clean_name, -6.2088, 106.8456, "Baru Bergabung", 1))
+                ''', (clean_name, 0.0, 0.0, "Mencari Sinyal GPS Real...", 1))
                 conn.commit()
                 
-                # Set parameter URL agar tersimpan saat tab ditutup & dibuka lagi
                 st.query_params["user"] = clean_name
                 st.rerun()
         else:
@@ -110,10 +108,10 @@ if st.session_state.nama_saya == "":
 
     st.info("👋 **Selamat datang!** Masukkan nama kamu di sidebar kiri untuk masuk ke peta grup lokasi.")
 
-# JIKA SUDAH LOGIN (SESI OTOMATIS BERLANJUT MESKI TAB DITUTUP & DIBUKA LAGI)
+# JIKA SUDAH LOGIN
 else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 Sesi tersimpan. Meskipun tab ditutup, saat dibuka kembali kamu otomatis langsung masuk.")
+    st.sidebar.caption("📡 Pelacak GPS Real-Time Aktif.")
     
     # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
@@ -147,28 +145,34 @@ else:
 
     # --- DAFTAR ANGGOTA AKTIF ---
     st.sidebar.subheader("📋 Anggota Aktif di Grup")
-    df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota WHERE status_aktif = 1", conn)
+    df_sidebar = pd.read_sql("SELECT nama, lat, lon, waktu FROM anggota WHERE status_aktif = 1", conn)
     if not df_sidebar.empty:
         st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
         for idx, row in df_sidebar.iterrows():
             status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
-            st.sidebar.markdown(f"📍 **{row['nama']}**{status_kamu}<br><small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", unsafe_allow_html=True)
+            st_gps_info = "🟢 GPS Terhubung" if (row['lat'] != 0.0 and row['lat'] is not None) else "🟡 Mencari Sinyal GPS..."
+            st.sidebar.markdown(
+                f"📍 **{row['nama']}**{status_kamu}<br>"
+                f"<small style='color:gray;'>Status: {st_gps_info}</small><br>"
+                f"<small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", 
+                unsafe_allow_html=True
+            )
             st.sidebar.markdown("---")
     else:
         st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-    # --- SKRIP JAVASCRIPT SILENT GPS ---
+    # --- SKRIP JAVASCRIPT REAL-TIME GPS (ACCURACY & AUTO-SYNC) ---
     current_user_name = st.session_state.nama_saya
     
-    html_silent_gps = f"""
+    html_realtime_gps = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Background Tracker Aktif:</b> Mengirim posisi & jam WIB tiap 1 menit secara senyap.
+        📡 <b>Pelacak GPS Perangkat Aktif:</b> Mengambil koordinat presisi langsung dari sensor HP/perangkat kamu.
     </div>
 
     <script>
     const userName = "{current_user_name}";
 
-    function sendSilentGPS() {{
+    function sendRealtimeGPS() {{
         if (navigator.geolocation) {{
             navigator.geolocation.getCurrentPosition(
                 function(position) {{
@@ -182,25 +186,35 @@ else:
                     const timeWIB = hours + ":" + minutes + ":" + seconds;
                     
                     const currentUrl = new URL(window.parent.location.href);
+                    const prevLat = currentUrl.searchParams.get("lat");
+                    const prevLon = currentUrl.searchParams.get("lon");
+                    
                     currentUrl.searchParams.set("user", userName);
                     currentUrl.searchParams.set("lat", lat);
                     currentUrl.searchParams.set("lon", lon);
                     currentUrl.searchParams.set("time", timeWIB);
+                    
                     window.parent.history.replaceState({{}}, '', currentUrl.href);
+
+                    // Jika koordinat baru pertama kali ditangkap dari HP, muat ulang halaman agar peta langsung menggambar ulang lokasi aktual
+                    if (!prevLat || prevLat === "0" || prevLat === "0.0") {{
+                        window.parent.location.reload();
+                    }}
                 }},
                 function(error) {{
                     console.log("GPS Error: " + error.message);
                 }},
-                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
+                {{ enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }}
             );
         }}
     }}
 
-    sendSilentGPS();
-    setInterval(sendSilentGPS, 60000);
+    // Eksekusi langsung saat komponen dimuat
+    sendRealtimeGPS();
+    setInterval(sendRealtimeGPS, 30000); // Sinkronisasi tiap 30 detik
     </script>
     """
-    st.components.v1.html(html_silent_gps, height=50)
+    st.components.v1.html(html_realtime_gps, height=50)
 
     # --- TAMPILAN PETA BERSAMA ---
     col_tittle, col_btn = st.columns([3, 1])
@@ -213,42 +227,41 @@ else:
 
     df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
 
-    if not df_lokasi.empty:
-        center_lat = df_lokasi['lat'].mean()
-        center_lon = df_lokasi['lon'].mean()
+    # Hanya ambil data dengan koordinat nyata (bukan NULL dan bukan 0.0)
+    df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
+
+    if not df_valid.empty:
+        # Peta berpusat tepat di rata-rata titik koordinat aktual perangkat anggota
+        center_lat = df_valid['lat'].mean()
+        center_lon = df_valid['lon'].mean()
         
-        if pd.isna(center_lat) or pd.isna(center_lon) or (center_lat == 0 and center_lon == 0):
-            center_lat, center_lon = -6.2088, 106.8456
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=15)
         
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
-        
-        for idx, row in df_lokasi.iterrows():
-            if row['lat'] is None or row['lon'] is None or (row['lat'] == 0.0 and row['lon'] == 0.0):
-                continue
-                
+        for idx, row in df_valid.iterrows():
             is_me = (row['nama'].lower() == st.session_state.nama_saya.lower())
             
             warna_marker = 'red' if is_me else 'blue'
             ikon_simbol = 'user' if is_me else 'map-marker'
             
-            popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small>"
+            popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small><br><small>Lat: {row['lat']:.5f}, Lon: {row['lon']:.5f}</small>"
             
             folium.Marker(
                 [row['lat'], row['lon']], 
-                popup=folium.Popup(popup_html, max_width=200),
-                tooltip=row['nama'],
+                popup=folium.Popup(popup_html, max_width=220),
+                tooltip=f"{row['nama']} (Akurat)",
                 icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
             ).add_to(m)
 
             folium.Circle(
                 location=[row['lat'], row['lon']],
-                radius=100,
+                radius=50,
                 color='red' if is_me else 'blue',
                 fill=True,
-                fill_opacity=0.15
+                fill_opacity=0.2
             ).add_to(m)
 
         st_folium(m, width=1100, height=520)
 
     else:
-        st.info("Belum ada posisi anggota lain yang tercatat di peta.")
+        st.warning("📡 **Sedang mengambil lokasi presisi dari HP kamu...**")
+        st.info("Pastikan kamu mengeklik tombol **Allow / Izinkan Lokasi** pada pop-up izin browser HP. Jika peta belum muncul, klik tombol **Refresh Peta Manual** di kanan atas.")
