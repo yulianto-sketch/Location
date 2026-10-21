@@ -10,10 +10,22 @@ import requests
 st.set_page_config(page_title="Peta Lokasi Grup & SPBU", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup (Google/Email Login)")
 
-# --- 1. DATABASE SQLITE & MIGRASI SKEMA ---
+# --- 1. DATABASE SQLITE & OTOMATIS RESET TABEL LAMA ---
 def init_db():
     conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
     cursor = conn.cursor()
+    
+    # Cek apakah tabel anggota sudah ada tapi belum punya PRIMARY KEY email
+    cursor.execute("PRAGMA table_info(anggota);")
+    columns = cursor.fetchall()
+    has_pk = any(col[5] == 1 for col in columns) # col[5] adalah penanda primary key di sqlite
+    
+    # Jika tabel sudah ada tapi email belum jadi primary key, drop tabel lama agar tidak error
+    if columns and not has_pk:
+        cursor.execute("DROP TABLE anggota;")
+        conn.commit()
+
+    # Buat ulang tabel dengan struktur bersih & email sebagai PRIMARY KEY
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS anggota (
             email TEXT PRIMARY KEY,
@@ -147,7 +159,7 @@ if st.session_state.user_email == "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            # Menggunakan INSERT OR REPLACE standar yang kompatibel di semua versi SQLite
+            # Perintah INSERT OR REPLACE standar dengan Primary Key email yang valid
             cursor.execute('''
                 INSERT OR REPLACE INTO anggota (email, nama, lat, lon, waktu, status_aktif)
                 VALUES (?, ?, COALESCE((SELECT lat FROM anggota WHERE email = ?), 0.0), COALESCE((SELECT lon FROM anggota WHERE email = ?), 0.0), COALESCE((SELECT waktu FROM anggota WHERE email = ?), 'Mencari Sinyal GPS...'), 1)
