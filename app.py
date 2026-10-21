@@ -8,7 +8,7 @@ import sqlite3
 st.set_page_config(page_title="Peta Turing Privat", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup Turing")
 
-# --- 1. DATABASE SQLITE & INISIALISASI TABEL ---
+# --- 1. DATABASE SQLITE & MIGRASI SKEMA OTOMATIS ---
 def init_db():
     conn = sqlite3.connect('turing_lokasi.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -21,6 +21,11 @@ def init_db():
             status_aktif INTEGER DEFAULT 1
         )
     ''')
+    # Pastikan kolom status_aktif tetap ada jika database lama sudah terlanjur dibuat
+    try:
+        cursor.execute("ALTER TABLE anggota ADD COLUMN status_aktif INTEGER DEFAULT 1")
+    except sqlite3.OperationalError:
+        pass # Kolom sudah ada, abaikan error
     conn.commit()
     return conn
 
@@ -80,7 +85,6 @@ if st.session_state.nama_saya == "":
                 st.sidebar.error("❌ Nama tersebut sudah digunakan oleh peserta lain. Gunakan nama panggilan lain.")
             else:
                 st.session_state.nama_saya = clean_name
-                # Memasukkan 5 nilai untuk 5 kolom (nama, lat, lon, waktu, status_aktif)
                 cursor.execute('''
                     INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu, status_aktif)
                     VALUES (?, ?, ?, ?, ?)
