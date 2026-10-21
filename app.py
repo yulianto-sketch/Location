@@ -31,14 +31,14 @@ if "nama_saya" not in st.session_state:
 if "sedang_gabung" not in st.session_state:
     st.session_state.sedang_gabung = False
 
-# --- 3. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER (BACKGROUND FETCH) ---
+# --- 3. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
 query_params = st.query_params
 if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
     try:
         u_name = query_params["user"]
         u_lat = float(query_params["lat"])
         u_lon = float(query_params["lon"])
-        waktu_sekarang = query_params["time"] # Mengambil jam WIB langsung akurat dari HP klien
+        waktu_sekarang = query_params["time"]
         
         cursor = conn.cursor()
         cursor.execute('''
@@ -49,11 +49,11 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
     except ValueError:
         pass
 
-# --- SIDEBAR: KONTROL SESI & TOMBOL RESET BER-PIN ---
+# --- SIDEBAR: KONTROL SESI ---
 st.sidebar.header("⚙️ Sesi Turing")
 
+# JIKA BELUM GABUNG: Tampilkan form login saja
 if not st.session_state.sedang_gabung:
-    # --- FORM LOGIN ---
     st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
     input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
@@ -65,14 +65,14 @@ if not st.session_state.sedang_gabung:
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
+# JIKA SUDAH GABUNG: Tombol gabung hilang, tampilkan tombol Keluar & Panel Reset
 else:
-    # --- MENU KETIKA SUDAH GABUNG ---
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit, hemat kuota).")
+    st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit).")
     
     st.sidebar.markdown("---")
     
-    # TOMBOL KELUAR SESI UNTUK PRIBADI
+    # TOMBOL KELUAR SESI
     if st.sidebar.button("🚪 Keluar Sesi", type="secondary"):
         cursor = conn.cursor()
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
@@ -82,7 +82,7 @@ else:
         st.session_state.nama_saya = ""
         st.rerun()
 
-    # --- FITUR RESET SEMUA ANGGOTA DENGAN KODE PIN 123 ---
+    # --- PANEL RESET SEMUA ANGGOTA DENGAN KODE PIN 123 ---
     st.sidebar.markdown("---")
     st.sidebar.write("🛠️ **Panel Reset Grup (Butuh Kode)**")
     pin_input = st.sidebar.text_input("Masukkan Kode Reset:", type="password", key="pin_reset_input")
@@ -133,7 +133,6 @@ if st.session_state.sedang_gabung:
                     const lat = position.coords.latitude;
                     const lon = position.coords.longitude;
                     
-                    // Ambil waktu lokal device yang otomatis mengikuti zona waktu WIB HP pengguna
                     const now = new Date();
                     const hours = String(now.getHours()).padStart(2, '0');
                     const minutes = String(now.getMinutes()).padStart(2, '0');
