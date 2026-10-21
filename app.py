@@ -36,32 +36,14 @@ if "sedang_gabung" not in st.session_state:
 st.sidebar.header("⚙️ Sesi Turing")
 
 if not st.session_state.sedang_gabung:
-    st.sidebar.info("Masukkan nama Anda untuk bergabung ke dalam peta grup.")
-    input_nama = st.sidebar.text_input("Nama Anda / Panggilan:")
+    st.sidebar.info("Masukkan nama kamu untuk bergabung ke dalam sesi turing.")
+    input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:")
     
-    # Input Koordinat (Akan diisi otomatis oleh tombol GPS di bawah)
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        my_lat = st.sidebar.number_input("Latitude", value=0.0, format="%.6f", key="init_lat")
-    with col2:
-        my_lon = st.sidebar.number_input("Longitude", value=0.0, format="%.6f", key="init_lon")
-        
     if st.sidebar.button("🚀 Gabung Sesi Turing", type="primary"):
         if input_nama.strip() != "":
-            if my_lat == 0.0 and my_lon == 0.0:
-                st.sidebar.error("Klik tombol 'Dapatkan Lokasi Saya (GPS)' di layar utama dulu agar koordinat asli HP terdeteksi!")
-            else:
-                st.session_state.nama_saya = input_nama.strip()
-                st.session_state.sedang_gabung = True
-                
-                waktu_sekarang = datetime.now().strftime("%H:%M:%S")
-                cursor = conn.cursor()
-                cursor.execute('''
-                    INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
-                    VALUES (?, ?, ?, ?)
-                ''', (st.session_state.nama_saya, my_lat, my_lon, waktu_sekarang))
-                conn.commit()
-                st.rerun()
+            st.session_state.nama_saya = input_nama.strip()
+            st.session_state.sedang_gabung = True
+            st.rerun()
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
@@ -78,95 +60,91 @@ else:
         st.session_state.nama_saya = ""
         st.rerun()
 
-# --- 3. KOMPONEN GET GPS (HTML5 GEOLOCATION REAL) ---
-st.subheader("📡 Deteksi Lokasi Asli HP / GPS")
-
-# Script untuk mengambil GPS browser secara akurat
-html_get_gps = """
-<div style="background-color: #f0f2f6; padding: 10px; border-radius: 8px;">
-    <button onclick="getLocation()" style="padding: 8px 16px; background-color: #ff4b4b; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: bold;">
-        🎯 Ambil Lokasi GPS HP Saya Saat Ini
-    </button>
-    <p id="status_gps" style="margin-top: 8px; font-size: 14px; color: #333;"></p>
-</div>
-
-<script>
-function getLocation() {
-    const status = document.getElementById('status_gps');
-    if (navigator.geolocation) {
-        status.innerHTML = "Sedang mencari sinyal GPS...";
-        navigator.geolocation.getCurrentPosition(showPosition, showError, {
-            enableHighAccuracy: true,
-            timeout: 10000,
-            maximumAge: 0
-        });
-    } else {
-        status.innerHTML = "Browser Anda tidak mendukung Geolocation GPS.";
-    }
-}
-
-function showPosition(position) {
-    const lat = position.coords.latitude;
-    const lng = position.coords.longitude;
-    const status = document.getElementById('status_gps');
-    status.innerHTML = "<b>Lokasi GPS Berhasil Didapat!</b><br>Latitude: " + lat + "<br>Longitude: " + lng + "<br><i>Silakan salin/masukkan nilai ini ke kolom atau tekan tombol kirim.</i>";
-}
-
-function showError(error) {
-    const status = document.getElementById('status_gps');
-    switch(error.code) {
-        case error.PERMISSION_DENIED:
-            status.innerHTML = "<b>Akses GPS Ditolak!</b> Harap izinkan akses lokasi (Location Access) di pengaturan browser HP Anda.";
-            break;
-        case error.POSITION_UNAVAILABLE:
-            status.innerHTML = "Informasi lokasi tidak tersedia.";
-            break;
-        case error.TIMEOUT:
-            status.innerHTML = "Waktu pencarian GPS habis.";
-            break;
-        default:
-            status.innerHTML = "Terjadi kesalahan mengambil GPS.";
-            break;
-    }
-}
-</script>
-"""
-
-st.components.v1.html(html_get_gps, height=130)
-
-# Update lokasi berkala jika sudah bergabung
+# --- 3. AUTO GPS SENDER (HTML/JS INTEGRATION) ---
 if st.session_state.sedang_gabung:
-    st.markdown("---")
-    col_u1, col_u2, col_u3 = st.columns([2, 2, 2])
-    with col_u1:
-        cur_lat = st.number_input("Latitude Baru", value=0.0, format="%.6f", key="update_lat")
-    with col_u2:
-        cur_lon = st.number_input("Longitude Baru", value=0.0, format="%.6f", key="update_lon")
-    with col_u3:
-        st.write("")
-        st.write("")
-        if st.button("📍 Update Posisi Saya"):
-            if cur_lat != 0.0 and cur_lon != 0.0:
-                waktu_sekarang = datetime.now().strftime("%H:%M:%S")
-                cursor = conn.cursor()
-                cursor.execute('''
-                    UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE nama = ?
-                ''', (cur_lat, cur_lon, waktu_sekarang, st.session_state.nama_saya))
-                conn.commit()
-                st.success("Posisi berhasil diperbarui!")
-                st.rerun()
+    st.subheader(f"📡 Status Lokasi Live: {st.session_state.nama_saya}")
+    
+    # Komponen JS yang otomatis mengambil koordinat HP & update ke query params / session
+    html_autogps = f"""
+    <div id="status" style="padding: 12px; background-color: #e8f4f8; border-radius: 8px; font-family: sans-serif; border-left: 4px solid #0288d1;">
+        ⏳ Menghubungkan ke GPS HP...
+    </div>
+
+    <script>
+    function sendLocation() {{
+        const statusDiv = document.getElementById('status');
+        if (navigator.geolocation) {{
+            navigator.geolocation.getCurrentPosition(
+                function(position) {{
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    
+                    statusDiv.innerHTML = "<b>✅ GPS Terhubung Akurat!</b><br>Latitude: " + lat + "<br>Longitude: " + lon;
+                    
+                    // Mengirim data ke URL param untuk ditangkap Streamlit
+                    const url = new URL(window.parent.location.href);
+                    if (url.searchParams.get("lat") != lat || url.searchParams.get("lon") != lon) {{
+                        url.searchParams.set("lat", lat);
+                        url.searchParams.set("lon", lon);
+                        window.parent.location.href = url.href;
+                    }}
+                }},
+                function(error) {{
+                    switch(error.code) {{
+                        case error.PERMISSION_DENIED:
+                            statusDiv.innerHTML = "❌ <b>Akses GPS Ditolak!</b> Mohon aktifkan izin lokasi di browser HP kamu.";
+                            break;
+                        default:
+                            statusDiv.innerHTML = "⚠️ Gagal mengambil sinyal GPS. Pastikan Lokasi/GPS HP aktif.";
+                    }}
+                }},
+                {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
+            );
+        }} else {{
+            statusDiv.innerHTML = "❌ Browser tidak mendukung Geolocation.";
+        }}
+    }}
+
+    // Jalankan otomatis begitu komponen dimuat
+    sendLocation();
+    </script>
+    """
+    st.components.v1.html(html_autogps, height=90)
+
+    # Tangkap data GPS otomatis dari URL Query Parameters
+    query_params = st.query_params
+    if "lat" in query_params and "lon" in query_params:
+        try:
+            auto_lat = float(query_params["lat"])
+            auto_lon = float(query_params["lon"])
+            waktu_sekarang = datetime.now().strftime("%H:%M:%S")
+            
+            # Simpan/Update otomatis ke Database SQLite
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
+                VALUES (?, ?, ?, ?)
+            ''', (st.session_state.nama_saya, auto_lat, auto_lon, waktu_sekarang))
+            conn.commit()
+        except ValueError:
+            pass
+
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        if st.button("🔄 Update Posisi HP Saya"):
+            st.rerun()
 
 st.markdown("---")
 
-# --- 4. TAMPILAN PETA BERSAMA (SATU LAYAR UNTUK SEMUA) ---
+# --- 4. PETA BERSAMA (SATU LAYAR UNTUK SEMUA ANGGOTA) ---
 st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
 
 df_turing = pd.read_sql("SELECT * FROM anggota", conn)
 
 if not df_turing.empty:
-    st.write(f"Total anggota aktif saat ini: **{len(df_turing)} orang**")
+    st.write(f"Total anggota terpantau aktif: **{len(df_turing)} orang**")
     
-    # Hitung titik tengah berdasarkan rata-rata lokasi anggota
+    # Hitung titik tengah berdasarkan seluruh lokasi anggota yang ada
     center_lat = df_turing['lat'].mean()
     center_lon = df_turing['lon'].mean()
     
@@ -178,7 +156,7 @@ if not df_turing.empty:
         warna_marker = 'red' if is_me else 'blue'
         ikon_simbol = 'user' if is_me else 'motorcycle'
         
-        popup_html = f"<b>{row['nama']}</b> {'(Anda)' if is_me else ''}<br><small>Update: {row['waktu']}</small>"
+        popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update: {row['waktu']}</small>"
         
         folium.Marker(
             [row['lat'], row['lon']], 
@@ -187,9 +165,15 @@ if not df_turing.empty:
             icon=folium.Icon(color=warna_marker, icon=ikon_simbol, prefix='fa')
         ).add_to(m)
 
+        # Lingkaran halus di sekitar titik
+        folium.Circle(
+            location=[row['lat'], row['lon']],
+            radius=100,
+            color='red' if is_me else 'blue',
+            fill=True,
+            fill_opacity=0.1
+        ).add_to(m)
+
     st_folium(m, width=1100, height=500)
-    
-    if st.button("🔄 Refresh Peta"):
-        st.rerun()
 else:
-    st.info("Belum ada anggota yang bergabung di peta.")
+    st.info("Belum ada anggota yang bergabung. Masukkan nama kamu di sidebar untuk mulai membagikan lokasi.")
