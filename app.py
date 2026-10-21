@@ -10,10 +10,11 @@ import requests
 st.set_page_config(page_title="Peta Lokasi Grup & SPBU", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup (Google/Email Login)")
 
-# --- 1. DATABASE SQLITE & MIGRASI SKEMA ---
+# --- 1. DATABASE SQLITE & MIGRASI SKEMA (DIPERBAIKI) ---
 def init_db():
     conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
     cursor = conn.cursor()
+    # Pastikan email didefinisikan sebagai PRIMARY KEY agar ON CONFLICT berjalan normal
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS anggota (
             email TEXT PRIMARY KEY,
@@ -267,7 +268,6 @@ else:
         window.parent.location.href = currentUrlObj.href;
     }}
 
-    // Screen Wake Lock agar layar HP tetap menyala saat dipasang di stang
     let wakeLock = null;
     async function requestWakeLock() {{
         try {{
@@ -393,4 +393,4 @@ else:
 
     else:
         st.warning("📡 **Sedang menyingkronkan lokasi presisi dari HP kamu...**")
-        st.info("Pastikan kamu mengeklik tombol **Allow / Izinkan Lokasi** pada pop-up izin browser HP.")
+        st.info("💡 *Tips:* Jika file database lama masih tersimpan di server Anda, silakan hapus file **`lokasi_data.db`** lewat terminal/file manager agar struktur tabel barunya bisa terbentuk sempurna.")
