@@ -8,7 +8,7 @@ import sqlite3
 st.set_page_config(page_title="Peta Turing Privat", layout="wide")
 st.title("📍 Live Tracking Lokasi Grup Turing")
 
-# --- 1. DATABASE SQLITE ---
+# --- 1. DATABASE SQLITE (Diperluas dengan kolom status login) ---
 def init_db():
     conn = sqlite3.connect('turing_lokasi.db', check_same_thread=False)
     cursor = conn.cursor()
@@ -17,7 +17,8 @@ def init_db():
             nama TEXT PRIMARY KEY,
             lat REAL,
             lon REAL,
-            waktu TEXT
+            waktu TEXT,
+            status_aktif INTEGER DEFAULT 1
         )
     ''')
     conn.commit()
@@ -25,26 +26,20 @@ def init_db():
 
 conn = init_db()
 
-# --- 2. SESSION STATE ---
+# --- 2. COOKIE / SESSION STATE BERBASIS DATABASE ---
 if "nama_saya" not in st.session_state:
     st.session_state.nama_saya = ""
-if "sedang_gabung" not in st.session_state:
-    st.session_state.sedang_gabung = False
 
-# --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-RESET ADMIN) ---
-if st.session_state.sedang_gabung:
+# Cek apakah nama yang tersimpan di memori lokal saat ini benar-benar terdaftar di database
+if st.session_state.nama_saya != "":
     cursor = conn.cursor()
-    cursor.execute("SELECT nama FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
-    user_exists = cursor.fetchone()
-    
-    # Jika nama tidak ditemukan di DB (karena di-reset/dihapus), paksa logout di HP ini
-    if not user_exists:
-        st.session_state.sedang_gabung = False
+    cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (st.session_state.nama_saya,))
+    active_user = cursor.fetchone()
+    if not active_user:
+        # Jika sudah di-reset admin atau dihapus, bersihkan session lokal
         st.session_state.nama_saya = ""
-        st.sidebar.warning("⚠️ Sesi turing telah di-reset oleh admin. Anda otomatis dikeluarkan.")
-        st.rerun()
 
-# --- 4. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
+# --- 3. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
 query_params = st.query_params
 if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
     try:
@@ -53,13 +48,15 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
         u_lon = float(query_params["lon"])
         waktu_sekarang = query_params["time"]
         
-        # Hanya update jika user tersebut masih terdaftar di sesi (mencegah auto-rejoin setelah reset)
-        if st.session_state.sedang_gabung and u_name == st.session_state.nama_saya:
-            cursor = conn.cursor()
+        cursor = conn.cursor()
+        # Cek apakah user ini masih diizinkan aktif di database
+        cursor.execute("SELECT status_aktif FROM anggota WHERE nama = ?", (u_name,))
+        res = cursor.fetchone()
+        
+        if res and res[0] == 1:
             cursor.execute('''
-                INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
-                VALUES (?, ?, ?, ?)
-            ''', (u_name, u_lat, u_lon, waktu_sekarang))
+                UPDATE anggota SET lat = ?, lon = ?, waktu = ? WHERE nama = ?
+            ''', (u_lat, u_lon, waktu_sekarang, u_name))
             conn.commit()
     except ValueError:
         pass
@@ -67,36 +64,40 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
 # --- SIDEBAR: KONTROL SESI ---
 st.sidebar.header("⚙️ Sesi Turing")
 
-# JIKA BELUM GABUNG / SUDAH LOGOUT
-if not st.session_state.sedang_gabung:
+# JIKA BELUM LOGIN / BELUM ADA NAMA
+if st.session_state.nama_saya == "":
     st.sidebar.info("Silakan masukkan nama kamu untuk bergabung ke dalam sesi turing.")
     input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
     if st.sidebar.button("🚀 Gabung Sesi Turing", type="primary"):
         if input_nama.strip() != "":
-            st.session_state.nama_saya = input_nama.strip()
-            st.session_state.sedang_gabung = True
+            clean_name = input_nama.strip()
             
-            # Daftarkan nama pertama kali ke DB
             cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu)
-                VALUES (?, ?, ?, ?)
-            ''', (st.session_state.nama_saya, 0.0, 0.0, "Baru Bergabung"))
-            conn.commit()
+            # Cek apakah nama sudah dipakai orang lain
+            cursor.execute("SELECT nama FROM anggota WHERE nama = ?", (clean_name,))
+            existing = cursor.fetchone()
             
-            st.rerun()
+            if existing:
+                st.sidebar.error("❌ Nama tersebut sudah digunakan oleh peserta lain. Gunakan nama panggilan lain.")
+            else:
+                st.session_state.nama_saya = clean_name
+                # Masukkan ke database sebagai aktif
+                cursor.execute('''
+                    INSERT OR REPLACE INTO anggota (nama, lat, lon, waktu, status_aktif)
+                    VALUES (?, ?, ?, ?, 1)
+                للم''', (clean_name, -6.2088, 106.8456, "Baru Bergabung"))
+                conn.commit()
+                st.rerun()
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
-    # Tampilan Halaman Utama saat Belum Login
-    st.info("👋 **Selamat datang!** Silakan masukkan nama kamu di sidebar sebelah kiri dan klik **Gabung Sesi Turing** untuk mulai melihat peta bersama dan membagikan lokasi.")
+    st.info("👋 **Selamat datang!** Masukkan nama kamu di sidebar kiri untuk masuk ke peta grup turing.")
 
-# JIKA SUDAH GABUNG (LOGIN)
+# JIKA SUDAH LOGIN (SESI TERSIMPAN MESKI KELUAR BROWSER)
 else:
-    # --- SIDEBAR MENU UTAMA ---
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 GPS aktif di latar belakang (update otomatis tiap 1 menit).")
+    st.sidebar.caption("📡 Sesi tersimpan. Meski browser ditutup, kamu tetap tercatat di grup sampai logout/reset.")
     
     # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
@@ -104,7 +105,6 @@ else:
         cursor.execute("DELETE FROM anggota WHERE nama = ?", (st.session_state.nama_saya,))
         conn.commit()
         
-        st.session_state.sedang_gabung = False
         st.session_state.nama_saya = ""
         st.rerun()
 
@@ -119,18 +119,17 @@ else:
             cursor.execute("DELETE FROM anggota")
             conn.commit()
             
-            st.session_state.sedang_gabung = False
             st.session_state.nama_saya = ""
-            st.success("Semua data sesi berhasil di-reset!")
+            st.success("Semua data sesi berhasil di-reset untuk semua orang!")
             st.rerun()
         else:
             st.sidebar.error("❌ Kode PIN salah! (Gunakan kode: 123)")
 
     st.sidebar.markdown("---")
 
-    # --- DAFTAR ANGGOTA AKTIF (HANYA MUNCUL JIKA SUDAH LOGIN) ---
+    # --- DAFTAR ANGGOTA AKTIF ---
     st.sidebar.subheader("📋 Anggota Aktif di Grup")
-    df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota", conn)
+    df_sidebar = pd.read_sql("SELECT nama, waktu FROM anggota WHERE status_aktif = 1", conn)
     if not df_sidebar.empty:
         st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
         for idx, row in df_sidebar.iterrows():
@@ -185,7 +184,7 @@ else:
     """
     st.components.v1.html(html_silent_gps, height=50)
 
-    # --- TAMPILAN PETA BERSAMA (HANYA MUNCUL JIKA SUDAH LOGIN) ---
+    # --- TAMPILAN PETA BERSAMA ---
     col_tittle, col_btn = st.columns([3, 1])
     with col_tittle:
         st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
@@ -194,7 +193,7 @@ else:
         if st.button("🔄 Refresh Peta Manual"):
             st.rerun()
 
-    df_turing = pd.read_sql("SELECT * FROM anggota", conn)
+    df_turing = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
 
     if not df_turing.empty:
         center_lat = df_turing['lat'].mean()
