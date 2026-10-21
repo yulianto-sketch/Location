@@ -66,14 +66,14 @@ if "lat" in query_params and "lon" in query_params and "user" in query_params an
         pass
 
 # --- SIDEBAR: KONTROL SESI ---
-st.sidebar.header("⚙️ Sesi Turing")
+st.sidebar.header("⚙️ Sesi Lokasi")
 
 # JIKA BELUM LOGIN / BELUM ADA NAMA
 if st.session_state.nama_saya == "":
-    st.sidebar.info("Silakan masukkan nama kamu untuk bergabung ke dalam sesi turing.")
+    st.sidebar.info("Silakan masukkan nama kamu untuk bergabung ke dalam sesi lokasi.")
     input_nama = st.sidebar.text_input("Nama Kamu / Panggilan:", key="input_nama_field")
     
-    if st.sidebar.button("🚀 Gabung Sesi Turing", type="primary"):
+    if st.sidebar.button("🚀 Gabung Sesi Lokasi", type="primary"):
         if input_nama.strip() != "":
             clean_name = input_nama.strip()
             
@@ -94,7 +94,7 @@ if st.session_state.nama_saya == "":
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
-    st.info("👋 **Selamat datang!** Masukkan nama kamu di sidebar kiri untuk masuk ke peta grup turing.")
+    st.info("👋 **Selamat datang!** Masukkan nama kamu di sidebar kiri untuk masuk ke peta grup lokasi.")
 
 # JIKA SUDAH LOGIN (SESI TERSIMPAN MESKI KELUAR BROWSER)
 else:
@@ -189,7 +189,7 @@ else:
     # --- TAMPILAN PETA BERSAMA ---
     col_tittle, col_btn = st.columns([3, 1])
     with col_tittle:
-        st.subheader("🗺️ Peta Pantauan Anggota Turing Aktif")
+        st.subheader("🗺️ Peta Pantauan Anggota Aktif")
     with col_btn:
         st.write("")
         if st.button("🔄 Refresh Peta Manual"):
