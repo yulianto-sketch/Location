@@ -43,29 +43,36 @@ def calculate_distance(lat1, lon1, lat2, lon2):
     c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
     return R * c
 
-# --- FUNGSI AMBIL SPBU REAL-TIME VIA OVERPASS API (OPENSTREETMAP) ---
-@st.cache_data(ttl=600) # Cache selama 10 menit agar hemat bandwidth
+# --- FUNGSI AMBIL SEMUA SPBU REAL-TIME VIA OVERPASS API (OPENSTREETMAP) ---
+@st.cache_data(ttl=300) # Cache selama 5 menit agar cepat & tidak over-fetch
 def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
     radius_meters = int(radius_km * 1000)
-    overpass_url = "http://overpass-api.de/api/interpreter"
+    overpass_url = "https://overpass-api.de/api/interpreter"
+    
+    # Query diperluas untuk mengambil seluruh elemen SPBU tanpa batas kecil
     query = f"""
-    [out:json];
+    [out:json][timeout:15];
     (
       node["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
       way["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
+      relation["amenity"="fuel"](around:{radius_meters},{center_lat},{center_lon});
     );
-    out center 50;
+    out center 150;
     """
     try:
-        resp = requests.post(overpass_url, data={'data': query}, timeout=10)
+        resp = requests.post(overpass_url, data={'data': query}, timeout=12)
         data = resp.json()
         spbu_list = []
         for element in data.get('elements', []):
             lat = element.get('lat') or element.get('center', {}).get('lat')
             lon = element.get('lon') or element.get('center', {}).get('lon')
             tags = element.get('tags', {})
-            brand = tags.get('brand', tags.get('name', 'SPBU / Pom Bensin'))
             
+            # Deteksi nama SPBU / Operator
+            brand = tags.get('brand', tags.get('operator', tags.get('name', 'SPBU / Pom Bensin')))
+            if brand == 'SPBU / Pom Bensin' and tags.get('name'):
+                brand = tags.get('name')
+                
             if lat and lon:
                 spbu_list.append({
                     "nama": brand,
@@ -74,7 +81,7 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
                 })
         return spbu_list
     except Exception:
-        # Fallback SPBU Utama Banten / Tangerang / Jabodetabek jika API timeout
+        # Fallback daftar SPBU utama jika koneksi API sedang sibuk
         return [
             {"nama": "SPBU Pertamina Rajeg", "lat": -6.1558, "lon": 106.5083},
             {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
@@ -82,6 +89,8 @@ def fetch_nearby_spbu(center_lat, center_lon, radius_km=50):
             {"nama": "SPBU Rest Area KM 43 Banten", "lat": -6.2575, "lon": 106.3980},
             {"nama": "SPBU Rest Area KM 68 Serang", "lat": -6.1384, "lon": 106.1925},
             {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
+            {"nama": "SPBU Pertamina Pasar Kemis", "lat": -6.1732, "lon": 106.5412},
+            {"nama": "SPBU Pertamina Balaraja", "lat": -6.1912, "lon": 106.4521},
         ]
 
 # --- 2. BACA URL PARAMETER UNTUK AUTO-LOGIN BUKA TAB BARU ---
@@ -99,7 +108,7 @@ if st.session_state.nama_saya == "" and "user" in query_params:
     if valid_user:
         st.session_state.nama_saya = valid_user[0]
 
-# --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-RESET ADMIN) ---
+# --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-KICK / DI-RESET ADMIN) ---
 if st.session_state.nama_saya != "":
     cursor = conn.cursor()
     cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (st.session_state.nama_saya,))
@@ -179,12 +188,37 @@ else:
         st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
         st.rerun()
 
-    # PANEL RESET SEMUA ANGGOTA DENGAN KODE PIN 123
+    # --- PANEL KICK ANGGOTA & RESET ALL (PASSWORD: 123) ---
     st.sidebar.markdown("---")
-    st.sidebar.write("🛠️ **Panel Reset Grup (Butuh Kode)**")
-    pin_input = st.sidebar.text_input("Masukkan Kode Reset:", type="password", key="pin_reset_input")
+    st.sidebar.subheader("🛠️ Panel Admin (PIN: 123)")
     
-    if st.sidebar.button("🗑️ Reset Semua Anggota", type="secondary"):
+    df_members = pd.read_sql("SELECT nama FROM anggota WHERE status_aktif = 1", conn)
+    member_list = df_members['nama'].tolist() if not df_members.empty else []
+    
+    # 1. KICK ANGGOTA MANUAL
+    st.sidebar.write("👢 **Kick Anggota**")
+    selected_member = st.sidebar.selectbox("Pilih Anggota:", options=["-- Pilih --"] + member_list)
+    kick_pin = st.sidebar.text_input("Password Kick:", type="password", key="kick_pin_input")
+    
+    if st.sidebar.button("🚫 Kick Anggota", type="secondary"):
+        if kick_pin == "123":
+            if selected_member != "-- Pilih --":
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM anggota WHERE nama = ?", (selected_member,))
+                conn.commit()
+                st.sidebar.success(f"Anggota '{selected_member}' berhasil dikeluarkan!")
+                st.rerun()
+            else:
+                st.sidebar.error("Pilih anggota yang ingin dikeluarkan!")
+        else:
+            st.sidebar.error("❌ Password salah! (PIN: 123)")
+
+    # 2. RESET SEMUA ANGGOTA
+    st.sidebar.markdown("---")
+    st.sidebar.write("🗑️ **Reset Semua Anggota**")
+    pin_input = st.sidebar.text_input("Password Reset All:", type="password", key="pin_reset_input")
+    
+    if st.sidebar.button("🔥 Reset Semua", type="secondary"):
         if pin_input == "123":
             cursor = conn.cursor()
             cursor.execute("DELETE FROM anggota")
@@ -192,16 +226,16 @@ else:
             
             st.session_state.nama_saya = ""
             st.query_params.clear()
-            st.success("Semua data sesi berhasil di-reset untuk semua orang!")
+            st.success("Semua data sesi berhasil di-reset!")
             
             st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
             st.rerun()
         else:
-            st.sidebar.error("❌ Kode PIN salah! (Gunakan kode: 123)")
+            st.sidebar.error("❌ Password salah! (PIN: 123)")
 
     st.sidebar.markdown("---")
 
-    # --- DAFTAR ANGGOTA AKTIF & TERUPDATE SERENTAK ---
+    # --- DAFTAR ANGGOTA AKTIF ---
     st.sidebar.subheader("📋 Anggota Aktif di Grup")
     df_sidebar = pd.read_sql("SELECT nama, lat, lon, waktu FROM anggota WHERE status_aktif = 1", conn)
     if not df_sidebar.empty:
@@ -260,7 +294,6 @@ else:
                     currentUrl.searchParams.set("lon", lon);
                     currentUrl.searchParams.set("time", timeWIB);
                     
-                    // Reload halaman utama agar waktu WIB & posisi di sidebar/peta ter-update serentak
                     window.parent.location.href = currentUrl.href;
                 }},
                 function(error) {{
@@ -271,7 +304,6 @@ else:
         }}
     }}
 
-    // Auto-sync setiap 30 detik (30000 ms)
     setInterval(sendSynchronizedGPS, 30000);
     </script>
     """
@@ -284,7 +316,6 @@ else:
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
-        # Peta berpusat di lokasi pengguna yang sedang login
         my_data = df_valid[df_valid['nama'].str.lower() == st.session_state.nama_saya.lower()]
         
         if not my_data.empty:
@@ -320,14 +351,13 @@ else:
                 fill_opacity=0.2
             ).add_to(m)
 
-        # 2. MARKER SPBU BESAR DI RADIUS MAX 50 KM
+        # 2. MARKER SPBU BESAR LENGKAP DI RADIUS MAX 50 KM
         spbu_data = fetch_nearby_spbu(center_lat, center_lon, radius_km=50)
         spbu_added = set()
         
         for spbu in spbu_data:
             dist = calculate_distance(center_lat, center_lon, spbu['lat'], spbu['lon'])
             
-            # Filter ketat maksimal 50 KM dari titik user login
             if dist <= 50.0:
                 spbu_key = (round(spbu['lat'], 4), round(spbu['lon'], 4))
                 if spbu_key not in spbu_added:
