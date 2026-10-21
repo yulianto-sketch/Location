@@ -21,19 +21,30 @@ def init_db():
             status_aktif INTEGER DEFAULT 1
         )
     ''')
-    # Pastikan kolom status_aktif tetap ada jika database lama sudah terlanjur dibuat
     try:
         cursor.execute("ALTER TABLE anggota ADD COLUMN status_aktif INTEGER DEFAULT 1")
     except sqlite3.OperationalError:
-        pass # Kolom sudah ada, abaikan error
+        pass
     conn.commit()
     return conn
 
 conn = init_db()
 
-# --- 2. SESSION STATE ---
+# --- 2. BACA URL PARAMETER UNTUK AUTO-LOGIN BUKA TAB BARU ---
+query_params = st.query_params
+
 if "nama_saya" not in st.session_state:
     st.session_state.nama_saya = ""
+
+# Auto-recovery sesi jika ada parameter user di URL
+if st.session_state.nama_saya == "" and "user" in query_params:
+    user_from_url = query_params["user"]
+    cursor = conn.cursor()
+    cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (user_from_url,))
+    valid_user = cursor.fetchone()
+    
+    if valid_user:
+        st.session_state.nama_saya = valid_user[0]
 
 # --- 3. CEK INTEGRITAS SESI (LOGOUT OTOMATIS JIKA DI-RESET ADMIN) ---
 if st.session_state.nama_saya != "":
@@ -41,11 +52,11 @@ if st.session_state.nama_saya != "":
     cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (st.session_state.nama_saya,))
     active_user = cursor.fetchone()
     if not active_user:
-        # Jika sudah di-reset admin atau dihapus, bersihkan session lokal
+        # Jika sudah di-reset admin, bersihkan session dan hapus parameter URL
         st.session_state.nama_saya = ""
+        st.query_params.clear()
 
 # --- 4. TANGKAP DATA GPS & WAKTU LOKAL WIB DARI BROWSER ---
-query_params = st.query_params
 if "lat" in query_params and "lon" in query_params and "user" in query_params and "time" in query_params:
     try:
         u_name = query_params["user"]
@@ -78,11 +89,11 @@ if st.session_state.nama_saya == "":
             clean_name = input_nama.strip()
             
             cursor = conn.cursor()
-            cursor.execute("SELECT nama FROM anggota WHERE nama = ?", (clean_name,))
+            cursor.execute("SELECT nama FROM anggota WHERE nama = ? AND status_aktif = 1", (clean_name,))
             existing = cursor.fetchone()
             
             if existing:
-                st.sidebar.error("❌ Nama tersebut sudah digunakan oleh peserta lain. Gunakan nama panggilan lain.")
+                st.sidebar.error("❌ Nama tersebut sedang aktif digunakan. Gunakan nama panggilan lain.")
             else:
                 st.session_state.nama_saya = clean_name
                 cursor.execute('''
@@ -90,16 +101,19 @@ if st.session_state.nama_saya == "":
                     VALUES (?, ?, ?, ?, ?)
                 ''', (clean_name, -6.2088, 106.8456, "Baru Bergabung", 1))
                 conn.commit()
+                
+                # Set parameter URL agar tersimpan saat tab ditutup & dibuka lagi
+                st.query_params["user"] = clean_name
                 st.rerun()
         else:
             st.sidebar.error("Nama tidak boleh kosong!")
 
     st.info("👋 **Selamat datang!** Masukkan nama kamu di sidebar kiri untuk masuk ke peta grup lokasi.")
 
-# JIKA SUDAH LOGIN (SESI TERSIMPAN MESKI KELUAR BROWSER)
+# JIKA SUDAH LOGIN (SESI OTOMATIS BERLANJUT MESKI TAB DITUTUP & DIBUKA LAGI)
 else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 Sesi tersimpan. Meski browser ditutup, kamu tetap tercatat di grup sampai logout/reset.")
+    st.sidebar.caption("📡 Sesi tersimpan. Meskipun tab ditutup, saat dibuka kembali kamu otomatis langsung masuk.")
     
     # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
@@ -108,6 +122,7 @@ else:
         conn.commit()
         
         st.session_state.nama_saya = ""
+        st.query_params.clear()
         st.rerun()
 
     # PANEL RESET SEMUA ANGGOTA DENGAN KODE PIN 123
@@ -122,6 +137,7 @@ else:
             conn.commit()
             
             st.session_state.nama_saya = ""
+            st.query_params.clear()
             st.success("Semua data sesi berhasil di-reset untuk semua orang!")
             st.rerun()
         else:
