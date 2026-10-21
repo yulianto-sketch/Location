@@ -111,7 +111,7 @@ if st.session_state.nama_saya == "":
 # JIKA SUDAH LOGIN
 else:
     st.sidebar.success(f"Aktif sebagai: **{st.session_state.nama_saya}**")
-    st.sidebar.caption("📡 Pelacak GPS Real-Time Aktif.")
+    st.sidebar.caption("📡 Pelacak GPS Real-Time Aktif (Update tiap 30 detik).")
     
     # TOMBOL LOGOUT PRIBADI
     if st.sidebar.button("🚪 Logout / Keluar Sesi", type="primary"):
@@ -161,12 +161,12 @@ else:
     else:
         st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-    # --- SKRIP JAVASCRIPT REAL-TIME GPS (ACCURACY & AUTO-SYNC) ---
+    # --- SKRIP JAVASCRIPT REAL-TIME GPS (INTERVAL 30 DETIK) ---
     current_user_name = st.session_state.nama_saya
     
     html_realtime_gps = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Pelacak GPS Perangkat Aktif:</b> Mengambil koordinat presisi langsung dari sensor HP/perangkat kamu.
+        📡 <b>Background Tracker Aktif:</b> Mengirim posisi & jam WIB tiap 30 detik secara senyap.
     </div>
 
     <script>
@@ -187,7 +187,6 @@ else:
                     
                     const currentUrl = new URL(window.parent.location.href);
                     const prevLat = currentUrl.searchParams.get("lat");
-                    const prevLon = currentUrl.searchParams.get("lon");
                     
                     currentUrl.searchParams.set("user", userName);
                     currentUrl.searchParams.set("lat", lat);
@@ -196,7 +195,7 @@ else:
                     
                     window.parent.history.replaceState({{}}, '', currentUrl.href);
 
-                    // Jika koordinat baru pertama kali ditangkap dari HP, muat ulang halaman agar peta langsung menggambar ulang lokasi aktual
+                    // Auto refresh halaman saat pertama kali koordinat didapat dari HP
                     if (!prevLat || prevLat === "0" || prevLat === "0.0") {{
                         window.parent.location.reload();
                     }}
@@ -209,9 +208,10 @@ else:
         }}
     }}
 
-    // Eksekusi langsung saat komponen dimuat
+    // Eksekusi pertama kali saat dimuat
     sendRealtimeGPS();
-    setInterval(sendRealtimeGPS, 30000); // Sinkronisasi tiap 30 detik
+    // Sinkronisasi otomatis diatur ulang setiap 30 detik (30000 milidetik)
+    setInterval(sendRealtimeGPS, 30000);
     </script>
     """
     st.components.v1.html(html_realtime_gps, height=50)
@@ -227,11 +227,10 @@ else:
 
     df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
 
-    # Hanya ambil data dengan koordinat nyata (bukan NULL dan bukan 0.0)
+    # Hanya ambil data dengan koordinat nyata (bukan 0.0/None)
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
-        # Peta berpusat tepat di rata-rata titik koordinat aktual perangkat anggota
         center_lat = df_valid['lat'].mean()
         center_lon = df_valid['lon'].mean()
         
