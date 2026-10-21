@@ -5,12 +5,12 @@ from streamlit_folium import st_folium
 import sqlite3
 
 # Konfigurasi Halaman
-st.set_page_config(page_title="Peta Turing Privat", layout="wide")
-st.title("📍 Live Tracking Lokasi Grup Turing")
+st.set_page_config(page_title="Peta Lokasi Privat", layout="wide")
+st.title("📍 Live Tracking Lokasi Grup")
 
 # --- 1. DATABASE SQLITE & MIGRASI SKEMA OTOMATIS ---
 def init_db():
-    conn = sqlite3.connect('turing_lokasi.db', check_same_thread=False)
+    conn = sqlite3.connect('lokasi_data.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS anggota (
@@ -136,7 +136,7 @@ else:
         st.sidebar.write(f"Total: **{len(df_sidebar)} orang** online")
         for idx, row in df_sidebar.iterrows():
             status_kamu = " (Kamu)" if row['nama'] == st.session_state.nama_saya else ""
-            st.sidebar.markdown(f"🏍️ **{row['nama']}**{status_kamu}<br><small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", unsafe_allow_html=True)
+            st.sidebar.markdown(f"📍 **{row['nama']}**{status_kamu}<br><small style='color:gray;'>🕒 Update (WIB): {row['waktu']}</small>", unsafe_allow_html=True)
             st.sidebar.markdown("---")
     else:
         st.sidebar.info("Belum ada anggota lain yang bergabung.")
@@ -195,25 +195,25 @@ else:
         if st.button("🔄 Refresh Peta Manual"):
             st.rerun()
 
-    df_turing = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
+    df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
 
-    if not df_turing.empty:
-        center_lat = df_turing['lat'].mean()
-        center_lon = df_turing['lon'].mean()
+    if not df_lokasi.empty:
+        center_lat = df_lokasi['lat'].mean()
+        center_lon = df_lokasi['lon'].mean()
         
         if pd.isna(center_lat) or pd.isna(center_lon) or (center_lat == 0 and center_lon == 0):
             center_lat, center_lon = -6.2088, 106.8456
         
         m = folium.Map(location=[center_lat, center_lon], zoom_start=13)
         
-        for idx, row in df_turing.iterrows():
+        for idx, row in df_lokasi.iterrows():
             if row['lat'] is None or row['lon'] is None or (row['lat'] == 0.0 and row['lon'] == 0.0):
                 continue
                 
             is_me = (row['nama'].lower() == st.session_state.nama_saya.lower())
             
             warna_marker = 'red' if is_me else 'blue'
-            ikon_simbol = 'user' if is_me else 'motorcycle'
+            ikon_simbol = 'user' if is_me else 'map-marker'
             
             popup_html = f"<b>{row['nama']}</b> {'(Kamu)' if is_me else ''}<br><small>Update (WIB): {row['waktu']}</small>"
             
