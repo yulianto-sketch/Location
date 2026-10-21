@@ -3,10 +3,11 @@ import pandas as pd
 import folium
 from streamlit_folium import st_folium
 import sqlite3
+import math
 
 # Konfigurasi Halaman
 st.set_page_config(page_title="Peta Lokasi Privat", layout="wide")
-st.title("📍 Live Tracking Lokasi Grup")
+st.title("📍 Live Tracking Lokasi Grup & SPBU Radius 50km")
 
 # --- 1. DATABASE SQLITE & MIGRASI SKEMA OTOMATIS ---
 def init_db():
@@ -29,6 +30,30 @@ def init_db():
     return conn
 
 conn = init_db()
+
+# --- FUNGSI HITUNG JARAK (HAVERSINE FORMULA) ---
+def calculate_distance(lat1, lon1, lat2, lon2):
+    R = 6371.0 # Radius bumi dalam Kilometer
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 + 
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * 
+         math.sin(dlon / 2) ** 2)
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return R * c
+
+# --- DATABASE / DAFTAR SPBU BESAR KUNCI (CONTOH TITIK UTAMA BANTEN/JABODETABEK/JABAR) ---
+# Bisa ditambahkan koordinat SPBU Rest Area / Jalur Utama lainnya
+SPBU_LIST = [
+    {"nama": "SPBU Pertamina Pasti Pas Rajeg", "lat": -6.1558, "lon": 106.5083},
+    {"nama": "SPBU Pertamina Cikupa", "lat": -6.2301, "lon": 106.5234},
+    {"nama": "SPBU Rest Area KM 13.5 Tol Jakarta-Tangerang", "lat": -6.2162, "lon": 106.6912},
+    {"nama": "SPBU Rest Area KM 43 Tol Tangerang-Merak", "lat": -6.2575, "lon": 106.3980},
+    {"nama": "SPBU Rest Area KM 68 Tol Tangerang-Merak", "lat": -6.1384, "lon": 106.1925},
+    {"nama": "SPBU Pertamina Bandara Soekarno-Hatta", "lat": -6.1265, "lon": 106.6548},
+    {"nama": "SPBU Shell BSD Boulevard", "lat": -6.3012, "lon": 106.6534},
+    {"nama": "SPBU Pertamina Puncak Bogor", "lat": -6.6983, "lon": 106.9231},
+]
 
 # --- 2. BACA URL PARAMETER UNTUK AUTO-LOGIN BUKA TAB BARU ---
 query_params = st.query_params
@@ -121,6 +146,9 @@ else:
         
         st.session_state.nama_saya = ""
         st.query_params.clear()
+        
+        # Hapus localStorage saat logout
+        st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
         st.rerun()
 
     # PANEL RESET SEMUA ANGGOTA DENGAN KODE PIN 123
@@ -137,6 +165,9 @@ else:
             st.session_state.nama_saya = ""
             st.query_params.clear()
             st.success("Semua data sesi berhasil di-reset untuk semua orang!")
+            
+            # Hapus localStorage saat reset
+            st.components.v1.html("<script>localStorage.removeItem('lokasi_user'); window.parent.location.href = window.parent.location.pathname;</script>", height=0)
             st.rerun()
         else:
             st.sidebar.error("❌ Kode PIN salah! (Gunakan kode: 123)")
@@ -161,16 +192,29 @@ else:
     else:
         st.sidebar.info("Belum ada anggota lain yang bergabung.")
 
-    # --- SKRIP JAVASCRIPT REAL-TIME GPS (INTERVAL 30 DETIK) ---
+    # --- SKRIP JAVASCRIPT LOCALSTORAGE (AUTO RECOVERY SESI & REAL-TIME GPS 30s) ---
     current_user_name = st.session_state.nama_saya
     
     html_realtime_gps = f"""
     <div style="padding: 10px; background-color: #e8f4f8; border-radius: 6px; font-family: sans-serif; font-size: 13px; border-left: 4px solid #0288d1; margin-bottom: 10px;">
-        📡 <b>Background Tracker Aktif:</b> Mengirim posisi & jam WIB tiap 30 detik secara senyap.
+        📡 <b>Background Tracker & Auto-Login Aktif:</b> Mengirim posisi tiap 30s & menyimpan sesi di memori browser.
     </div>
 
     <script>
     const userName = "{current_user_name}";
+    
+    // Simpan nama ke localStorage agar saat refresh/buka tab posisi tetap terdaftar
+    if (userName && userName !== "") {{
+        localStorage.setItem("lokasi_user", userName);
+    }}
+
+    // Auto recovery dari localStorage jika URL tereset
+    const savedUser = localStorage.getItem("lokasi_user");
+    const currentUrlObj = new URL(window.parent.location.href);
+    if (savedUser && !currentUrlObj.searchParams.has("user")) {{
+        currentUrlObj.searchParams.set("user", savedUser);
+        window.parent.location.href = currentUrlObj.href;
+    }}
 
     function sendRealtimeGPS() {{
         if (navigator.geolocation) {{
@@ -195,7 +239,6 @@ else:
                     
                     window.parent.history.replaceState({{}}, '', currentUrl.href);
 
-                    // Auto refresh halaman saat pertama kali koordinat didapat dari HP
                     if (!prevLat || prevLat === "0" || prevLat === "0.0") {{
                         window.parent.location.reload();
                     }}
@@ -208,9 +251,7 @@ else:
         }}
     }}
 
-    // Eksekusi pertama kali saat dimuat
     sendRealtimeGPS();
-    // Sinkronisasi otomatis diatur ulang setiap 30 detik (30000 milidetik)
     setInterval(sendRealtimeGPS, 30000);
     </script>
     """
@@ -219,7 +260,7 @@ else:
     # --- TAMPILAN PETA BERSAMA ---
     col_tittle, col_btn = st.columns([3, 1])
     with col_tittle:
-        st.subheader("🗺️ Peta Pantauan Anggota Aktif")
+        st.subheader("🗺️ Peta Pantauan Anggota & SPBU Besar (Radius 50 KM)")
     with col_btn:
         st.write("")
         if st.button("🔄 Refresh Peta Manual"):
@@ -227,15 +268,16 @@ else:
 
     df_lokasi = pd.read_sql("SELECT * FROM anggota WHERE status_aktif = 1", conn)
 
-    # Hanya ambil data dengan koordinat nyata (bukan 0.0/None)
+    # Filter data lokasi anggota yang valid
     df_valid = df_lokasi[(df_lokasi['lat'].notna()) & (df_lokasi['lat'] != 0.0) & (df_lokasi['lon'].notna()) & (df_lokasi['lon'] != 0.0)]
 
     if not df_valid.empty:
         center_lat = df_valid['lat'].mean()
         center_lon = df_valid['lon'].mean()
         
-        m = folium.Map(location=[center_lat, center_lon], zoom_start=15)
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=12)
         
+        # 1. MARKER ANGGOTA
         for idx, row in df_valid.iterrows():
             is_me = (row['nama'].lower() == st.session_state.nama_saya.lower())
             
@@ -253,11 +295,33 @@ else:
 
             folium.Circle(
                 location=[row['lat'], row['lon']],
-                radius=50,
+                radius=100,
                 color='red' if is_me else 'blue',
                 fill=True,
                 fill_opacity=0.2
             ).add_to(m)
+
+        # 2. MARKER SPBU BESAR DALAM RADIUS 50 KM DARI MASING-MASING ANGGOTA
+        spbu_added = set()
+        for _, member in df_valid.iterrows():
+            m_lat, m_lon = member['lat'], member['lon']
+            
+            for spbu in SPBU_LIST:
+                dist = calculate_distance(m_lat, m_lon, spbu['lat'], spbu['lon'])
+                
+                # Filter radius 50 km dari lokasi anggota
+                if dist <= 50.0:
+                    spbu_key = (spbu['lat'], spbu['lon'])
+                    if spbu_key not in spbu_added:
+                        spbu_added.add(spbu_key)
+                        
+                        popup_spbu = f"⛽ <b>{spbu['nama']}</b><br><small>Jarak: ~{dist:.1f} km dari {member['nama']}</small>"
+                        folium.Marker(
+                            [spbu['lat'], spbu['lon']],
+                            popup=folium.Popup(popup_spbu, max_width=220),
+                            tooltip=f"⛽ {spbu['nama']} ({dist:.1f} km)",
+                            icon=folium.Icon(color='orange', icon='gas-pump', prefix='fa')
+                        ).add_to(m)
 
         st_folium(m, width=1100, height=520)
 
